@@ -33,7 +33,7 @@ class LQR_DQN():
         self.num_epi  = 2001
         self.gam = 1
 
-        self.d_a = 20
+        self.d_a = 5
         self.d_x = 1
 
         self.h = 2
@@ -44,7 +44,7 @@ class LQR_DQN():
         self.dt = self.h/self.N
 
         self.time_axis = np.linspace(0,self.h,self.N)
-        self.actions = list(np.linspace(-4,4,self.d_a))
+        self.actions = list(np.linspace(-2,2,self.d_a))
         print(self.actions)
 
         self.X = np.zeros((self.N,self.d_x))
@@ -76,6 +76,8 @@ class LQR_DQN():
         self.max_memory_length = 5000
         
         self.loss_history = []
+        self.av_loss_history = []
+        self.temp_loss = []
         self.cost_history = []
         # setup set S
         self.set_S = set_S(self.d_x)
@@ -99,7 +101,8 @@ class LQR_DQN():
     def build_model(self):
         input = keras.Input((self.d_x,))
 
-        x = layers.Dense(units= 256, activation= 'relu', name = "Dense_1")(input)
+        x = layers.BatchNormalization()(input)
+        x = layers.Dense(units= 256, activation= 'relu', name = "Dense_1")(x)
         x = layers.Dense(units= 256, activation= 'relu', name = "Dense_2")(x)
 
         output = layers.Dense(units= self.d_a, name = 'output_layer')(x)
@@ -107,7 +110,7 @@ class LQR_DQN():
         model = keras.Model(inputs = input, outputs = output, name = "SOC_Model")
         model.compile(
         loss = losses.MeanSquaredError(),
-        optimizer = tf.keras.optimizers.Adam(learning_rate=0.00025),
+        optimizer = tf.keras.optimizers.Adam(learning_rate=0.0025),
         )
 
         
@@ -124,7 +127,7 @@ class LQR_DQN():
         model = keras.Model(inputs = input, outputs = output, name = "Stopping_Model")
         model.compile(
         loss = losses.MeanSquaredError(),
-        optimizer = tf.keras.optimizers.Adam(learning_rate=0.00025),
+        optimizer = tf.keras.optimizers.Adam(learning_rate=0.0025),
         )
         return model
 
@@ -134,7 +137,7 @@ class LQR_DQN():
         x = self.X[n]
           
         a = 100
-        eps = np.max([0.05, 0.1* (a/ (a + i_epi))])
+        eps = np.max([0.05, 0.7* (a/ (a + i_epi))])
         alp = 0.01#* (a / (a + i_epi))
 
         Q_vals = self.model(x)
@@ -205,6 +208,9 @@ class LQR_DQN():
             )
             
             self.loss_history.append(loss.history['loss'])
+            self.temp_loss.append(loss.history['loss'])
+
+        
             if (len(self.loss_history) >= 20000):
                 del self.loss_history[0]
 
@@ -252,16 +258,25 @@ if __name__ == "__main__":
             cost += c
 
             if (done):
+                
+                LQR.av_loss_history.append(np.mean(np.array(LQR.temp_loss).reshape(len(LQR.temp_loss))))
+
+                LQR.temp_loss = []
                 break
+       
+        LQR.av_loss_history.append(np.mean(np.array(LQR.temp_loss).reshape(len(LQR.temp_loss))))
+
+        LQR.temp_loss = []
+
         LQR.cost_history.append(c)
-        if (i_epi % 10 == 0):
+        if (i_epi % 1 == 0):
             print('episode', i_epi)
         if (i_epi % 100 == 0):
             LQR.model.save("LQR_Model.h5")
             LQR.stopping_model.save("Stopping_Time_Model.h5")
 
             num_sim = 1
-            fig,ax = plt.subplots(2,2)
+            fig,ax = plt.subplots(2,3)
             for i in range(num_sim):
                 X = np.zeros((LQR.N,1))
                 Tau = np.zeros(LQR.N)
@@ -303,9 +318,13 @@ if __name__ == "__main__":
                 
                 ax[0][1].plot(np.linspace(0,len(LQR.cost_history), len(LQR.cost_history)), LQR.cost_history)
                 ax[0][1].set_title('cost')
-
+                ax[0][2].plot(np.linspace(0,len(LQR.loss_history),len(LQR.loss_history)), LQR.loss_history)
+                ax[0][2].set_title('loss')
+               
+                ax[1][2].plot(np.linspace(0,len(LQR.av_loss_history), len(LQR.av_loss_history)), LQR.av_loss_history)
+                ax[1][2].set_title('Average_Loss per episode')
             num_x = 20
-            x_axis = np.linspace(-4,4, num_x)
+            x_axis = np.linspace(-2,2, num_x)
             V = np.zeros(num_x)
             A = np.zeros(num_x)
 
