@@ -11,6 +11,7 @@ num_sim - Number of simulations
 '''
 class SOC_DQN():
     
+    
     def __init__(self):
         self.num_epi  = 1001
         self.gam = 0.9
@@ -252,7 +253,7 @@ class SOC_DQN_Conv():
         self.action_index_history = []
         self.in_S_history = []
 
-        self.batch_size = 8
+        self.batch_size =16
         self.max_memory_length = 1000
 
         self.conv_width = 3
@@ -386,7 +387,7 @@ class SOC_DQN_Conv():
             loss = self.model.fit(
                 x = state_sample,
                 y = label,
-                verbose = '0',
+                verbose = 1,
                 batch_size= self.batch_size,
                 shuffle= False,
             )
@@ -427,7 +428,7 @@ if __name__ == "__main__":
             fig, ax = plt.subplots(3)
             err = np.zeros((DQN.N,1))
             
-            for i in range(100):
+            for i in range(50):
                 
                 X = np.zeros((DQN.N,1))
                 X_true = np.zeros((DQN.N,1))
@@ -435,7 +436,7 @@ if __name__ == "__main__":
 
                 for n in range(DQN.N -1):
                     if (setting == 'conv'):
-                        x_in = DQN.create_input(n,X)
+                        x_in = DQN.create_input(n,X).reshape(1,3,DQN.d_x)
                     else:
                         x_in = X[n]
                     q_vals = DQN.model.predict(x_in)
