@@ -239,7 +239,7 @@ class LQR_DQN():
 
 
 if __name__ == "__main__":
-    loading = False
+    loading = True
     LQR = LQR_DQN(loading)
 
     num_epi = LQR.num_epi
