@@ -47,6 +47,7 @@ class experience_memory():
         self.action_buffer = np.zeros((self.buffer_capacity, action_dim), dtype=np.float32)
         self.reward_buffer = np.zeros((self.buffer_capacity, 1), dtype=np.float32)
         self.next_state_buffer = np.zeros((self.buffer_capacity, state_dim), dtype=np.float32)
+        self.done_buffer = np.zeros((self.buffer_capacity, 1), dtype=np.float32)
 
     # Takes (s,a,r,s') obervation tuple as input
     def record(self, obs_tuple):
@@ -58,6 +59,8 @@ class experience_memory():
         self.action_buffer[index] = obs_tuple[1]
         self.reward_buffer[index] = obs_tuple[2]
         self.next_state_buffer[index] = obs_tuple[3]
+        self.done_buffer[index] = obs_tuple[4]
+
 
         self.buffer_counter += 1
 
@@ -65,60 +68,86 @@ class ActorCritic():
 
     def __init__(self, state_dim, action_dim):
 
-        self.batch_size = 32
+        self.batch_size = 64
         self.max_memory_size = 10000
 
         self.state_dim = state_dim
         self.action_dim = action_dim
 
         self.gamma = 0.99
-        self.tau = 0.005
+        self.tau = 0.05
         self.lower_action_bound = -1
         self.upper_action_bound = 1
-        self.action_space = np.array([-1,0,1])
+
+        self.action_space = np.linspace(-2,2,11)
         self.num_a = len(self.action_space)
 
         self.buffer = experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
 
         self.mean = np.zeros(1)
-        self.std_dev = 0.5*np.ones(1)
+        self.std_dev = 0.2*np.ones(1)
 
         self.noice_Obj = OUActionNoise(self.mean, self.std_dev)
         # init the neural nets
         self.critic = self.get_critic_NN()
         self.target_critic = self.get_critic_NN()
-        self.critic_optimizer = tf.keras.optimizers.Adam(0.001)
+        self.critic_optimizer = tf.keras.optimizers.RMSprop(0.0001)
 
     @tf.function
-    def update(self, state_batch, action_batch, reward_batch, next_state_batch):
+    def update(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch):
 
         with tf.GradientTape() as tape:
             
             next_q_vals =  self.target_critic(next_state_batch)
             
             target_vals = tf.reduce_min(next_q_vals, axis =1)
-
-            y = reward_batch + self.gamma*target_vals
+            y = reward_batch + (tf.ones_like(done_batch)-done_batch)* self.gamma*target_vals
+           
             critic_value = tf.reduce_min(self.critic(state_batch), axis =1)
             critic_loss = tf.math.reduce_mean(tf.math.square(y- critic_value))
             
         critic_grad = tape.gradient(critic_loss, self.critic.trainable_variables)
         self.critic_optimizer.apply_gradients(zip(critic_grad, self.critic.trainable_variables))
+    
+    @tf.function
+    def update_without_replay(self, state, action,reward, next_state, done):
 
-        
+        with tf.GradientTape() as tape:
+            
+            next_q_vals =  self.target_critic(next_state)
+            
+            target_vals = tf.reduce_min(next_q_vals, axis =1)
+            
+            y = tf.convert_to_tensor(reward) + tf.convert_to_tensor(self.gamma*(1-done))*target_vals
+           
+            critic_value = tf.reduce_min(self.critic(state), axis =1)
+            critic_loss = tf.math.reduce_mean(tf.math.square(y- critic_value))
+            
+        critic_grad = tape.gradient(critic_loss, self.critic.trainable_variables)
+        self.critic_optimizer.apply_gradients(zip(critic_grad, self.critic.trainable_variables))
+
+
+    def learn_without_replay(self, state, action,reward, next_state, done):
+        if done:
+            done_num = 1
+        else:
+            done_num = 0
+        self.update_without_replay(state, action,reward, next_state, done_num)
+
     def learn(self):
         # get sample
 
         record_range = min(self.buffer.buffer_counter, self.buffer.buffer_capacity)
 
         batch_indices = np.random.choice(record_range, self.batch_size)
-
+        
         state_batch = tf.convert_to_tensor(self.buffer.state_buffer[batch_indices])
         action_batch = tf.convert_to_tensor(self.buffer.action_buffer[batch_indices])
         reward_batch = tf.convert_to_tensor(self.buffer.reward_buffer[batch_indices])
         next_state_batch = tf.convert_to_tensor(self.buffer.next_state_buffer[batch_indices])
-
-        self.update(state_batch, action_batch, reward_batch, next_state_batch)
+        done_batch = tf.convert_to_tensor(self.buffer.done_buffer[batch_indices])
+        
+        self.update(state_batch, action_batch, reward_batch, next_state_batch,done_batch)
 
     @tf.function
     def update_target(self, target_weights, weights):
@@ -127,17 +156,15 @@ class ActorCritic():
 
     def get_critic_NN(self):
         # input [state, action]
+        last_init = tf.random_uniform_initializer(minval=-0.003, maxval=0.003)
 
         state_input = layers.Input(shape =(self.state_dim,))
 
         out = layers.BatchNormalization()(state_input)
-        out = layers.Dense(16, activation='relu')(out)
-        out = layers.Dense(32, activation ='relu')(out)
-
-
-        out = layers.Dense(256, activation = 'relu')(out)
-        out = layers.Dense(256, activation = 'relu')(out)
-        out = layers.Dense(self.num_a)(out)
+    
+        out = layers.Dense(512, activation = 'tanh')(out)
+        out = layers.Dense(512, activation = 'tanh')(out)
+        out = layers.Dense(self.num_a, kernel_initializer= last_init)(out)
 
         model = keras.Model(inputs = state_input, outputs = out)
 
@@ -159,31 +186,57 @@ class CaseOne():
 
     def __init__(self):
         
-        self.num_episodes = 50
+       # dX_t = (A X_t + B u_t) dt + sig * dB_t
+        self.A = 1
+        self.B = 1
+        self.sig = 2
+
+        # f(x,u) = f_A ||x||^2 + f_B ||u||^2
+        self.f_A = 1
+        self.f_B = 1
+
+        # g(x) = D * ||x||^2
+        self.D = 0
+
+        self.num_episodes = 500
         self.state_dim = 1
         self.action_dim = 1
         self.AC = ActorCritic(self.state_dim, self.action_dim)
 
-        self.T = 5
-        self.N = 50
+        self.T = 1
+        self.N = 20
         self.dt = self.T/self.N
 
-        self.r = 2
-
-        self.sig = 0.1
-
+        self.r = 0
+        
+    
     def f(self, n,x,a):
-        return np.linalg.norm(a)**2
+        return np.float32(self.f_B *np.linalg.norm(a)**2 + self.f_A*np.linalg.norm(x)**2)
         
 
     def g(self, n,x):
-        return np.zeros(self.AC.action_dim)
+        return self.D * np.linalg.norm(x)**2
     
     def has_exit(self,x):
-        if (np.linalg.norm(x) < self.r):
+        if self.r == 0:
             return False
         else:
+            if (np.linalg.norm(x) < self.r):
+                return False
+            else:
+                return True
+
+    def check_if_done(self,n,x):
+        if n == self.N-2:
             return True
+        else:
+            if self.r == 0:
+                return False
+            else:
+                if (np.linalg.norm(x) < self.r):
+                    return False
+                else:
+                    return True
 
     def run_episodes(self):
         ep_reward_list = []
@@ -197,32 +250,29 @@ class CaseOne():
 
                 state = tf.expand_dims(tf.convert_to_tensor(X[n]),0)
 
-                eps = 0.1
+                eps = 0.7
                 action = self.AC.epsilon_greedy(state,eps)
-
+                
                 reward = self.f(n,state, action)
 
                 X[n+1] = X[n] + (X[n] + action)* self.dt + self.sig * np.sqrt(self.dt) * np.random.normal()
 
                 new_state = tf.expand_dims(tf.convert_to_tensor(X[n+1]),0)
 
-                done = self.has_exit(new_state)
-                if (done):
-                    reward = reward + self.g(n,new_state)
-
+                done = self.check_if_done(n,new_state)
+                
                 episodic_reward += reward
-                self.AC.buffer.record((state,action,reward, new_state))
 
-                self.AC.learn()
-
+                self.AC.buffer.record((state,action,reward, new_state, done))
+                
+                self.AC.learn_without_replay(state, action, reward, new_state, done)
+                #self.AC.learn()
                 self.AC.update_target(self.AC.target_critic.variables, self.AC.critic.variables)
                
 
                 if (done):
                     break
                 
-                if (n == self.N-2):
-                    break
                 n += 1
 
             ep_reward_list.append(episodic_reward)
@@ -250,9 +300,10 @@ class CaseOne():
         P = np.zeros(n_x)
 
         for ix in range(n_x):
+            print(state_space[ix])
             q_vals = self.AC.critic(tf.expand_dims(tf.convert_to_tensor(state_space[ix]),0))
             print(q_vals)
-            a_ind = tf.argmin(q_vals)[0]
+            a_ind = tf.argmin(q_vals[0])
             print(a_ind)
 
             P[ix] = self.AC.action_space[a_ind]
@@ -271,7 +322,11 @@ class CaseOne():
         X = np.zeros((self.N,1))
 
         for i in range(self.N-1):
-            X[i+1] = X[i] + (X[i] + self.AC.actor(tf.expand_dims(tf.convert_to_tensor(X[i]),0))[0][0])*self.dt + self.sig * np.sqrt(self.dt) * np.random.normal()
+            q_vals = self.AC.critic(tf.expand_dims(tf.convert_to_tensor(X[i]),0))
+            a_ind = tf.argmin(q_vals[0])
+            a = self.AC.action_space[a_ind]
+
+            X[i+1] = X[i] + (X[i] + a)*self.dt + self.sig * np.sqrt(self.dt) * np.random.normal()
         ax[2].plot(np.linspace(0, self.T, self.N), X)
         ax[2].set_ylim([-5,5])
         ax[2].fill_between(np.linspace(0, self.T, self.N),-self.r,self.r , color = 'green', alpha = 0.3)
@@ -283,4 +338,4 @@ if __name__ == "__main__":
 
 
     LQR.run_episodes()
-    # LQR.plots()
+    LQR.plots()
