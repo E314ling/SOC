@@ -69,17 +69,17 @@ class ActorCritic():
     def __init__(self, state_dim, action_dim):
 
         self.batch_size = 64
-        self.max_memory_size = 10000
+        self.max_memory_size = 50000
 
         self.state_dim = state_dim
         self.action_dim = action_dim
 
-        self.gamma = 0.99
+        self.gamma = 0.95
         self.tau = 0.05
-        self.lower_action_bound = -1
-        self.upper_action_bound = 1
+        self.lower_action_bound = -4
+        self.upper_action_bound = 4
 
-        self.action_space = np.linspace(-2,2,11)
+        self.action_space = np.linspace(self.lower_action_bound,self.upper_action_bound,21)
         self.num_a = len(self.action_space)
 
         self.buffer = experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
@@ -91,9 +91,9 @@ class ActorCritic():
         # init the neural nets
         self.critic = self.get_critic_NN()
         self.target_critic = self.get_critic_NN()
-        self.critic_optimizer = tf.keras.optimizers.RMSprop(0.0001)
+        self.critic_optimizer = tf.keras.optimizers.Adam(0.001)
 
-    @tf.function
+    #@tf.function
     def update(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch):
 
         with tf.GradientTape() as tape:
@@ -103,9 +103,10 @@ class ActorCritic():
             target_vals = tf.reduce_min(next_q_vals, axis =1)
             y = reward_batch + (tf.ones_like(done_batch)-done_batch)* self.gamma*target_vals
            
-            critic_value = tf.reduce_min(self.critic(state_batch), axis =1)
-            critic_loss = tf.math.reduce_mean(tf.math.square(y- critic_value))
+            critic_value = tf.reduce_min(self.critic(state_batch),axis =1)
             
+            critic_loss = tf.math.reduce_mean(tf.math.square(y- critic_value))
+        
         critic_grad = tape.gradient(critic_loss, self.critic.trainable_variables)
         self.critic_optimizer.apply_gradients(zip(critic_grad, self.critic.trainable_variables))
     
@@ -156,7 +157,7 @@ class ActorCritic():
 
     def get_critic_NN(self):
         # input [state, action]
-        last_init = tf.random_uniform_initializer(minval=-0.003, maxval=0.003)
+        last_init = tf.random_uniform_initializer(minval=-0.3, maxval=0.3)
 
         state_input = layers.Input(shape =(self.state_dim,))
 
@@ -173,7 +174,7 @@ class ActorCritic():
     def epsilon_greedy(self, state, eps):
 
         q_vals = self.critic(state)
-        if (eps <= np.random.rand()):
+        if (eps > np.random.rand()):
             rand_ind = np.random.choice(self.num_a, 1)
             return self.action_space[rand_ind]
         
@@ -189,7 +190,7 @@ class CaseOne():
        # dX_t = (A X_t + B u_t) dt + sig * dB_t
         self.A = 1
         self.B = 1
-        self.sig = 2
+        self.sig = 0
 
         # f(x,u) = f_A ||x||^2 + f_B ||u||^2
         self.f_A = 1
@@ -198,7 +199,7 @@ class CaseOne():
         # g(x) = D * ||x||^2
         self.D = 0
 
-        self.num_episodes = 500
+        self.num_episodes = 1000
         self.state_dim = 1
         self.action_dim = 1
         self.AC = ActorCritic(self.state_dim, self.action_dim)
@@ -250,26 +251,29 @@ class CaseOne():
 
                 state = tf.expand_dims(tf.convert_to_tensor(X[n]),0)
 
-                eps = 0.7
+                eps = 0.4
                 action = self.AC.epsilon_greedy(state,eps)
                 
                 reward = self.f(n,state, action)
 
                 X[n+1] = X[n] + (X[n] + action)* self.dt + self.sig * np.sqrt(self.dt) * np.random.normal()
-
+                
                 new_state = tf.expand_dims(tf.convert_to_tensor(X[n+1]),0)
 
                 done = self.check_if_done(n,new_state)
                 
                 episodic_reward += reward
 
-                self.AC.buffer.record((state,action,reward, new_state, done))
                 
-                self.AC.learn_without_replay(state, action, reward, new_state, done)
-                #self.AC.learn()
-                self.AC.update_target(self.AC.target_critic.variables, self.AC.critic.variables)
+                
+                # warm up
+                if (ep <= 1):
+                    self.AC.learn_without_replay(state, action, reward, new_state, done)
+                
+                else:
+                    self.AC.buffer.record((state,action,reward, new_state, done))
+                    self.AC.learn()
                
-
                 if (done):
                     break
                 

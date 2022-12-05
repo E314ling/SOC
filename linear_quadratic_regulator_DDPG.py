@@ -67,8 +67,8 @@ class ActorCritic():
 
     def __init__(self, state_dim, action_dim):
 
-        self.batch_size = 64
-        self.max_memory_size = 5000
+        self.batch_size = 32
+        self.max_memory_size = 50000
 
         self.state_dim = state_dim
         self.action_dim = action_dim
@@ -91,7 +91,7 @@ class ActorCritic():
 
         self.actor = self.get_actor_NN()
         self.target_actor = self.get_actor_NN()
-        self.actor_optimizer = tf.keras.optimizers.Adam(0.001)
+        self.actor_optimizer = tf.keras.optimizers.Adam(0.0001)
 
     @tf.function
     def update(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch):
@@ -236,18 +236,18 @@ class CaseOne():
 
         # f(x,u) = f_A ||x||^2 + f_B ||u||^2
         self.f_A = 1
-        self.f_B = 0
+        self.f_B = 1
 
         # g(x) = D * ||x||^2
         self.D = 0
 
-        self.num_episodes = 200
+        self.num_episodes = 1000
         self.state_dim = 1
         self.action_dim = 1
         self.AC = ActorCritic(self.state_dim, self.action_dim)
 
         self.T = 1
-        self.N = 20
+        self.N = 40
         self.dt = self.T/self.N
 
         self.r = 0
@@ -286,6 +286,7 @@ class CaseOne():
         avg_reward_list = []
         for ep in range(self.num_episodes):
             X = np.zeros((self.N,1), dtype= np.float32)
+            X[0] = 4*np.random.rand() - 4
             n=0
             episodic_reward = 0
             while(True):
@@ -304,11 +305,13 @@ class CaseOne():
                 
                 episodic_reward += reward
 
-                self.AC.buffer.record((state,action,reward, new_state, done))
-
-                self.AC.learn_without_replay(state, action, reward, new_state, done)
-                #self.AC.learn()
-
+                # warm up
+                if (ep <= 100):
+                    self.AC.learn_without_replay(state, action, reward, new_state, done)
+                
+                else:
+                    self.AC.buffer.record((state,action,reward, new_state, done))
+                    self.AC.learn()
                 
                 self.AC.update_target(self.AC.target_critic.variables, self.AC.critic.variables)
                 self.AC.update_target(self.AC.target_actor.variables, self.AC.actor.variables)

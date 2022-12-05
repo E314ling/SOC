@@ -19,7 +19,7 @@ class MultivariantPolynomial():
         self.weigths = np.zeros(self.num_weights, dtype = np.float32)
         
         for i in range(self.num_weights):
-            b = 0.003
+            b = 0.03
             self.weigths[i] = 2*b*np.random.rand() - b
         self.exps = self.get_exponentials()
 
@@ -128,18 +128,16 @@ class ActorCritic():
 
     def __init__(self, state_dim, action_dim):
 
-        
-
-        self.batch_size = 64
-        self.max_memory_size = 10000
+        self.batch_size = 32
+        self.max_memory_size = 50000
 
         self.state_dim = state_dim
         self.action_dim = action_dim
 
         self.gamma = 0.99
         self.tau = 0.05
-        self.lower_action_bound = -1
-        self.upper_action_bound = 1
+        self.lower_action_bound = -4
+        self.upper_action_bound = 4
 
         self.action_space = np.linspace(self.lower_action_bound,self.upper_action_bound,11)
         self.num_a = len(self.action_space)
@@ -157,31 +155,37 @@ class ActorCritic():
         self.alpha = 0.001
         self.eps = 1
 
-    @tf.function
-    def update(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch):
-      
-        with tf.GradientTape() as tape:
-            target_actions = self.target_actor.evaluate(next_state_batch)
-            
-            y = reward_batch + (tf.ones_like(done_batch)-done_batch)* self.gamma*self.target_critic([next_state_batch, target_actions])
-            
-            critic_value = self.critic([state_batch, action_batch])
-            critic_loss = tf.math.reduce_mean(tf.math.square(y- critic_value))
-        
-        critic_grad = tape.gradient(critic_loss, self.critic.trainable_variables)
-        self.critic_optimizer.apply_gradients(zip(critic_grad, self.critic.trainable_variables))
-
-        with tf.GradientTape() as tape:
-            actions = self.actor(state_batch)
-            critic_value = self.critic([state_batch, actions])
-
-            actor_loss = tf.math.reduce_mean(critic_value)
-        actor_grad = tape.gradient(actor_loss, self.actor.trainable_variables)
-        self.actor_optimizer.apply_gradients(
-            zip(actor_grad, self.actor.trainable_variables)
-        )
-
     
+    def update(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch):
+   
+        critic_TD = np.zeros(self.batch_size)
+        critic_grad = np.zeros((self.batch_size, self.critic.num_weights))
+       
+        for i in range(self.batch_size):
+            state = state_batch[i]
+            next_state = next_state_batch[i]
+
+            vals = np.zeros(self.num_a)
+            for j in range(self.num_a):
+                a = self.action_space[j]
+                critic_grad_temp = self.critic.evaluate([state,a])
+                vals[j] = self.critic.predict(critic_grad_temp)
+
+            a_ind = np.argmin(vals)
+            action = self.action_space[a_ind]
+
+            target_critic_grad = self.target_critic.evaluate([next_state, action])
+            target_q = self.target_critic.predict(target_critic_grad)
+            
+            y = reward_batch[i] + (1-done_batch[i])* self.gamma*target_q
+
+           
+            critic_grad[i] = self.critic.evaluate([state, action])
+            critic_value = self.critic.predict(critic_grad[i])
+            critic_TD[i] = y - critic_value
+        
+        self.critic.weigths = self.critic.weigths + self.alpha * np.mean(critic_TD) * np.mean(critic_grad)
+      
     def update_without_replay(self, state, action,reward, next_state, done):
         
         
@@ -197,9 +201,9 @@ class ActorCritic():
         target_critic_grad = self.target_critic.evaluate([next_state, action])
         target_q = self.target_critic.predict(target_critic_grad)
 
-        y = tf.convert_to_tensor(reward) + tf.convert_to_tensor((1-done)* self.gamma)*target_q
+        y = reward +(1-done)* self.gamma*target_q
         
-        critic_grad = self.critic.evaluate([state, tf.reshape(tf.convert_to_tensor(action),[1,1])])
+        critic_grad = self.critic.evaluate([state, action])
         critic_value = self.critic.predict(critic_grad)
 
         critic_TD = y - critic_value
@@ -221,17 +225,17 @@ class ActorCritic():
 
         batch_indices = np.random.choice(record_range, self.batch_size)
 
-        state_batch = tf.convert_to_tensor(self.buffer.state_buffer[batch_indices])
-        action_batch = tf.convert_to_tensor(self.buffer.action_buffer[batch_indices])
-        reward_batch = tf.convert_to_tensor(self.buffer.reward_buffer[batch_indices])
-        next_state_batch = tf.convert_to_tensor(self.buffer.next_state_buffer[batch_indices])
+        state_batch = self.buffer.state_buffer[batch_indices]
+        action_batch = self.buffer.action_buffer[batch_indices]
+        reward_batch = self.buffer.reward_buffer[batch_indices]
+        next_state_batch = self.buffer.next_state_buffer[batch_indices]
 
-        done_batch = tf.convert_to_tensor(self.buffer.done_buffer[batch_indices])
+        done_batch = self.buffer.done_buffer[batch_indices]
         
         self.update(state_batch, action_batch, reward_batch, next_state_batch, done_batch)
 
 
-    @tf.function
+   
     def update_target(self, target_weights, weights):
         for (a,b) in zip(target_weights, weights):
             a.assign(self.tau *b + (1-self.tau) *a)
@@ -270,7 +274,7 @@ class CaseOne():
         # g(x) = D * ||x||^2
         self.D = 0
 
-        self.num_episodes = 500
+        self.num_episodes = 1000
         self.state_dim = 1
         self.action_dim = 1
         self.AC = ActorCritic(self.state_dim, self.action_dim)
@@ -315,14 +319,15 @@ class CaseOne():
         avg_reward_list = []
         for ep in range(self.num_episodes):
             X = np.zeros(self.N, dtype= np.float32)
+            X[0] = 4*np.random.rand() - 4
             n=0
             episodic_reward = 0
             while(True):
                 a = 10
 
-                self.AC.alpha = 0.0001
-                self.AC.eps = 0.7 * (a / (a + ep))
-                state = tf.expand_dims(tf.convert_to_tensor(X[n]),0)
+                self.AC.alpha = 0.001*(a / (a + ep))
+                self.AC.eps = 0.0 * (a / (a + ep))
+                state = X[n]
 
                 action = self.AC.epsilon_greedy(state)
 
@@ -330,16 +335,20 @@ class CaseOne():
 
                 X[n+1] = X[n] + (X[n] + action)* self.dt + self.sig * np.sqrt(self.dt) * np.random.normal()
 
-                new_state = tf.expand_dims(tf.convert_to_tensor(X[n+1]),0)
+                new_state = X[n+1]
 
                 done = self.check_if_done(n,new_state)
                 
                 episodic_reward += reward
+                
 
-                self.AC.buffer.record((state,action,reward, new_state, done))
-
-                self.AC.learn_without_replay(state, action, reward, new_state, done)
-                #self.AC.learn()
+                # warm up
+                if (ep <= 100):
+                    self.AC.learn_without_replay(state, action, reward, new_state, done)
+                
+                else:
+                    self.AC.buffer.record((state,action,reward, new_state, done))
+                    self.AC.learn()
 
                 
                 #self.AC.update_target(self.AC.target_critic.weigths, self.AC.critic.weigths)
