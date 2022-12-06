@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 class OUActionNoise:
-    def __init__(self, mean, std_deviation, theta=0.15, dt=1e-2, x_initial=None):
+    def __init__(self, mean, std_deviation, theta=0.1, dt=1e-2, x_initial=None):
         self.theta = theta
         self.mean = mean
         self.std_dev = std_deviation
@@ -67,14 +67,14 @@ class ActorCritic():
 
     def __init__(self, state_dim, action_dim):
 
-        self.batch_size = 32
+        self.batch_size = 64
         self.max_memory_size = 50000
 
         self.state_dim = state_dim
         self.action_dim = action_dim
 
         self.gamma = 0.99
-        self.tau = 0.005
+        self.tau = 0.1
         self.lower_action_bound = -4
         self.upper_action_bound = 4
 
@@ -87,19 +87,23 @@ class ActorCritic():
         # init the neural nets
         self.critic = self.get_critic_NN()
         self.target_critic = self.get_critic_NN()
+        self.target_critic.set_weights(self.critic.get_weights())
         self.critic_optimizer = tf.keras.optimizers.Adam(0.002)
 
         self.actor = self.get_actor_NN()
         self.target_actor = self.get_actor_NN()
-        self.actor_optimizer = tf.keras.optimizers.Adam(0.0001)
+        self.target_actor.set_weights(self.actor.get_weights())
+        self.actor_optimizer = tf.keras.optimizers.Adam(0.001)
 
     @tf.function
     def update(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch):
       
         with tf.GradientTape() as tape:
+            tape.watch(state_batch)
+            tape.watch(action_batch)
             target_actions = self.target_actor(next_state_batch)
            
-            y = reward_batch + (tf.ones_like(done_batch)-done_batch)* self.gamma*self.target_critic([next_state_batch, target_actions])
+            y = reward_batch + (1-done_batch)* self.gamma*self.target_critic([next_state_batch, target_actions])
             
             critic_value = self.critic([state_batch, action_batch])
             critic_loss = tf.math.reduce_mean(tf.math.square(y- critic_value))
@@ -108,6 +112,7 @@ class ActorCritic():
         self.critic_optimizer.apply_gradients(zip(critic_grad, self.critic.trainable_variables))
 
         with tf.GradientTape() as tape:
+            tape.watch(state_batch)
             actions = self.actor(state_batch)
             critic_value = self.critic([state_batch, actions])
 
@@ -122,6 +127,7 @@ class ActorCritic():
         
         
         with tf.GradientTape() as tape:
+            
             target_actions = self.target_actor(next_state)
            
             y = tf.convert_to_tensor(reward) + tf.convert_to_tensor((1-done)* self.gamma)*self.target_critic([next_state, target_actions])
@@ -232,7 +238,7 @@ class CaseOne():
         # dX_t = (A X_t + B u_t) dt + sig * dB_t
         self.A = 1
         self.B = 1
-        self.sig = 1
+        self.sig = 0
 
         # f(x,u) = f_A ||x||^2 + f_B ||u||^2
         self.f_A = 1
@@ -241,13 +247,13 @@ class CaseOne():
         # g(x) = D * ||x||^2
         self.D = 0
 
-        self.num_episodes = 1000
+        self.num_episodes = 500
         self.state_dim = 1
         self.action_dim = 1
         self.AC = ActorCritic(self.state_dim, self.action_dim)
 
         self.T = 1
-        self.N = 40
+        self.N = 20
         self.dt = self.T/self.N
 
         self.r = 0
@@ -306,7 +312,7 @@ class CaseOne():
                 episodic_reward += reward
 
                 # warm up
-                if (ep <= 100):
+                if (ep <= 1):
                     self.AC.learn_without_replay(state, action, reward, new_state, done)
                 
                 else:
@@ -325,7 +331,7 @@ class CaseOne():
 
             ep_reward_list.append(episodic_reward)
             # Mean of last 40 episodes
-            avg_reward = np.mean(ep_reward_list[-50:])
+            avg_reward = np.mean(ep_reward_list[-40:])
             print("Episode * {} * Avg Reward is ==> {}".format(ep, avg_reward))
             avg_reward_list.append(avg_reward)
         # Plotting graph
