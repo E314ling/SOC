@@ -67,7 +67,7 @@ class ActorCritic():
 
     def __init__(self, state_dim, action_dim, load_model):
 
-        self.batch_size = 32
+        self.batch_size = 128
         self.max_memory_size = 1000000
 
         self.state_dim = state_dim
@@ -86,15 +86,22 @@ class ActorCritic():
         self.noice_Obj = OUActionNoise(self.mean, self.std_dev)
         # init the neural nets
         if (load_model):
-            self.critic = tf.keras.models.load_model('./Models/LQR_DDPG_Critic.h5')
-            self.target_critic = tf.keras.models.load_model('./Models/LQR_DDPG_Critic.h5')
+            self.critic_1 = tf.keras.models.load_model('./Models/LQR_TD3_critic_1.h5')
+            self.target_critic_1 = tf.keras.models.load_model('./Models/LQR_TD3_critic_1.h5')
+
+            self.critic_2 = tf.keras.models.load_model('./Models/LQR_TD3_critic_2.h5')
+            self.target_critic_2 = tf.keras.models.load_model('./Models/LQR_TD3_critic_2.h5')
 
             self.actor = tf.keras.models.load_model('./Models/LQR_DDPG_Actor.h5')
             self.target_actor = tf.keras.models.load_model('./Models/LQR_DDPG_Actor.h5')
         else:
-            self.critic = self.get_critic_NN()
-            self.target_critic = self.get_critic_NN()
-            self.target_critic.set_weights(self.critic.get_weights())
+            self.critic_1 = self.get_critic_NN()
+            self.target_critic_1 = self.get_critic_NN()
+            self.target_critic_1.set_weights(self.critic_1.get_weights())
+
+            self.critic_2 = self.get_critic_NN()
+            self.target_critic_2 = self.get_critic_NN()
+            self.target_critic_2.set_weights(self.critic_2.get_weights())
             
             self.actor = self.get_actor_NN()
             self.target_actor = self.get_actor_NN()
@@ -102,53 +109,73 @@ class ActorCritic():
 
 
         self.critic_lr = 0.0001
-        self.critic_optimizer = tf.keras.optimizers.Adam(self.critic_lr)
+        self.critic_optimizer_1 = tf.keras.optimizers.Adam(self.critic_lr)
+        self.critic_optimizer_2 = tf.keras.optimizers.Adam(self.critic_lr)
         self.actor_lr = 0.0001
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
       
-
         self.var = 2
-        self.var_decay = 0.9999
-        self.lr_decay = 0.9999
+        self.var_decay = 0.999
+        self.lr_decay = 1
 
        
     def save_model(self):
-        self.critic.save('./Models/LQR_DDPG_critic.h5')
-        self.actor.save('./Models/LQR_DDPG_actor.h5')
+        self.critic_1.save('./Models/LQR_TD3_critic_1.h5')
+        self.critic_1.save('./Models/LQR_TD3_critic_2.h5')
+        self.actor.save('./Models/LQR_TD3_actor.h5')
     def update_lr(self):
         self.critic_lr = self.critic_lr * self.lr_decay
-        self.critic_optimizer = tf.keras.optimizers.Adam(self.critic_lr)
+        self.critic_optimizer_1 = tf.keras.optimizers.Adam(self.critic_lr)
+        self.critic_optimizer_2 = tf.keras.optimizers.Adam(self.critic_lr)
 
         self.actor_lr = self.actor_lr * self.lr_decay
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
 
     def update_var(self):
-        self.var = self.var * self.var_decay
+        self.var = np.max([0.1,self.var * self.var_decay])
     
     @tf.function
     def update_critic(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch):
-        target_actions = self.target_actor(next_state_batch)  
-        y = reward_batch + (1-done_batch)* self.gamma*self.target_critic([next_state_batch, target_actions])
+        target_actions = self.target_policy(next_state_batch) 
+        target_1 = self.target_critic_1([next_state_batch, target_actions])
+        target_2 = self.target_critic_2([next_state_batch, target_actions])
+        target_vals = tf.concat([target_1, target_2], axis = -1)
+
+        y = reward_batch + (1-done_batch)* self.gamma*tf.reduce_min(target_vals, axis =1)
 
         with tf.GradientTape() as tape:
             
-            critic_value = self.critic([state_batch, action_batch])
+            critic_value = self.critic_1([state_batch, action_batch])
             #critic_loss = tf.math.reduce_mean(tf.math.square(y- critic_value))
-            critic_loss = losses.huber_loss(y, critic_value)
+            critic_loss = losses.MSE(y, critic_value)
 
         
-        critic_grad = tape.gradient(critic_loss, self.critic.trainable_variables)
+        critic_grad = tape.gradient(critic_loss, self.critic_1.trainable_variables)
         #critic_grad, _ = tf.clip_by_global_norm(critic_grad, 5.0)
-        self.critic_optimizer.apply_gradients(zip(critic_grad, self.critic.trainable_variables))
+        self.critic_optimizer_1.apply_gradients(zip(critic_grad, self.critic_1.trainable_variables))
+
+
+        with tf.GradientTape() as tape:
+            
+            critic_value = self.critic_2([state_batch, action_batch])
+            #critic_loss = tf.math.reduce_mean(tf.math.square(y- critic_value))
+            critic_loss = losses.MSE(y, critic_value)
+
+        
+        critic_grad = tape.gradient(critic_loss, self.critic_2.trainable_variables)
+        #critic_grad, _ = tf.clip_by_global_norm(critic_grad, 5.0)
+        self.critic_optimizer_2.apply_gradients(zip(critic_grad, self.critic_2.trainable_variables))
+
 
        
+
     @tf.function
     def update_actor(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch):
        
         with tf.GradientTape() as tape:
-            tape.watch(state_batch)
+            
             actions = self.actor(state_batch)
-            critic_value = self.critic([state_batch, actions])
+            critic_value = self.critic_1([state_batch, actions])
 
             actor_loss = tf.math.reduce_mean(critic_value)
         actor_grad = tape.gradient(actor_loss, self.actor.trainable_variables)
@@ -244,8 +271,9 @@ class ActorCritic():
         sampled_actions = self.target_actor(state)
         
         #noice = self.noice_Obj()
-
-        sampled_actions = sampled_actions + tf.random.normal(shape = sampled_actions.get_shape(), mean = 0.0, stddev = 0.1, dtype = tf.float32)
+        noice = tf.random.normal(shape = sampled_actions.get_shape(), mean = 0.0, stddev = 0.2, dtype = tf.float32)
+        noice = tf.clip_by_value(noice, -0.5, 0.5)
+        sampled_actions = sampled_actions + noice
         
         legal_action = tf.clip_by_value(sampled_actions, clip_value_min = self.lower_action_bound, clip_value_max =self.upper_action_bound)
 
@@ -266,7 +294,7 @@ class CaseOne():
         # g(x) = D * ||x||^2
         self.D = 0
 
-        self.num_episodes = 2000
+        self.num_episodes = 5000
         self.state_dim = 1
         self.action_dim = 1
         self.AC = ActorCritic(self.state_dim, self.action_dim, False)
@@ -305,7 +333,7 @@ class CaseOne():
                 else:
                     return True
     
-    def run_episodes(self,n_x,V_t,A_t, base):
+    def run_episodes(self, n_x,V_t,A_t, base):
         ep_reward_list = []
         # To store average reward history of last few episodes
         avg_reward_list = []
@@ -334,9 +362,13 @@ class CaseOne():
                 # warm up
                 
                 self.AC.buffer.record((state,action,reward, new_state, done))
+                
+              
                 self.AC.learn(n)
                 
-                self.AC.update_target(self.AC.target_critic.variables, self.AC.critic.variables)
+                self.AC.update_target(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
+                self.AC.update_target(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
+
                 if (n % 2 == 0 and n != 0):
                     self.AC.update_target(self.AC.target_actor.variables, self.AC.actor.variables)
 
@@ -349,30 +381,30 @@ class CaseOne():
                 self.AC.update_lr()
                 self.AC.update_var()
 
-            ep_reward_list.append(episodic_reward)
-            # Mean of last 40 episodes
-            avg_reward = np.mean(ep_reward_list[-40:])
-            print("Episode * {} * Avg Reward is ==> {}, var ==> {}, actor_lr ==> {}".format(ep, avg_reward, self.AC.var, self.AC.actor_lr))
-            avg_reward_list.append(avg_reward)
 
-            if (ep % 100 == 0 and ep != 0):  
+            if (ep % 100 == 0 and ep != 0):
+                
                 plt.plot(avg_reward_list)
                 plt.hlines(base,xmin = 0, xmax = len(avg_reward_list))
                 plt.xlabel("Episode")
                 plt.ylabel("Avg. Epsiodic Reward")
                 plt.show()
                 self.plots(n_x,V_t,A_t)
-
+            ep_reward_list.append(episodic_reward)
+            # Mean of last 40 episodes
+            avg_reward = np.mean(ep_reward_list[-50:])
+            print("Episode * {} * Avg Reward is ==> {}, var ==> {}, actor_lr ==> {}".format(ep, avg_reward, self.AC.var, self.AC.actor_lr))
+            avg_reward_list.append(avg_reward)
         # Plotting graph
         # Episodes versus Avg. Rewards
         plt.plot(avg_reward_list)
         plt.xlabel("Episode")
         plt.ylabel("Avg. Epsiodic Reward")
-        self.AC.save_model()
         plt.show()
+        self.AC.save_model()
         self.plots(n_x,V_t,A_t)
-
         
+
     def plots(self,n_x,V_t,A_t):
         
         n_a = 20
@@ -381,9 +413,13 @@ class CaseOne():
         
         fig, ax = plt.subplots(3)
  
-        V = np.zeros(n_x)
+        V1 = np.zeros(n_x)
 
         P = np.zeros(n_x)
+
+        V2 = np.zeros(n_x)
+
+       
 
         for ix in range(n_x):
            state = np.array([0,state_space[ix]])
@@ -391,11 +427,15 @@ class CaseOne():
           
            P[ix] = action
 
-           v = self.AC.critic([tf.expand_dims(tf.convert_to_tensor(state),0),action])
+           v1 = self.AC.critic_1([tf.expand_dims(tf.convert_to_tensor(state),0),action])
            
-           V[ix] = v
+           V1[ix] = v1
+           v2 = self.AC.critic_2([tf.expand_dims(tf.convert_to_tensor(state),0),action])
+           
+           V2[ix] = v2
         
-        ax[0].plot(state_space, V, label = 'approximation')
+        ax[0].plot(state_space, V1, label = 'critic_1')
+        ax[0].plot(state_space, V2,label = 'critic_2')
         ax[0].plot(state_space, V_t[0], label = 'true_solution')
         ax[0].legend()
         ax[0].set_title('value function')
@@ -426,3 +466,4 @@ if __name__ == "__main__":
     #V_t,A_t = LQR.Solution(lqr).create_solution(n_x)
     V_t, A_t, base = LQR.Solution(lqr).dynamic_programming(n_x)
     lqr.run_episodes(n_x,V_t,A_t, base)
+    
