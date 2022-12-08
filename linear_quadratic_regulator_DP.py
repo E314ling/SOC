@@ -31,7 +31,9 @@ class Solution():
         self.poli = {}
 
     def create_solution(self,n_x):
-        
+        self.n_x = n_x
+        self.x_upper = 2
+        self.x_lower = -2
         x_space = np.linspace(-2,2, n_x)
         for n in reversed(range(self.N)):
             V_t = np.zeros(n_x)
@@ -56,7 +58,23 @@ class Solution():
             self.V[n] = V_t
             self.poli[n] = A_t
         
-        return self.V, self.poli
+        cum_cost = np.zeros(1000)
+
+        for i in range(1000):
+            X = np.zeros(self.N)
+            X[0] = 2*np.random.rand() - 2
+
+            c = np.zeros(self.N)
+            for n in range(self.N-1):
+                x_ind = self.state_to_dicrete(X[n])
+                a = self.poli[n][x_ind]
+                c[n] = self.f_A * np.linalg.norm(X[n])**2 + self.f_B * np.linalg.norm(a)**2
+
+                X[n+1] = self.A * X[n] + self.B *a + self.sig * np.random.normal()
+            
+            cum_cost[i] = np.sum(c)
+        
+        return self.V, self.poli, np.mean(cum_cost)
 
     def state_to_dicrete(self, state):
         s_new = int(self.n_x * (state - self.x_lower) / (self.x_upper - self.x_lower)) 
@@ -110,9 +128,9 @@ class Solution():
             V[t] = V_t
             actions[t] = A_t
         
-        cum_cost = np.zeros(100)
+        cum_cost = np.zeros(1000)
 
-        for i in range(100):
+        for i in range(1000):
             X = np.zeros(self.N)
             X[0] = 2*np.random.rand() - 2
 

@@ -70,8 +70,8 @@ class ActorCritic():
 
     def __init__(self, state_dim, action_dim,load_model):
 
-        self.batch_size = 32
-        self.max_memory_size = 50000
+        self.batch_size = 128
+        self.max_memory_size = 1000000
 
         self.state_dim = state_dim
         self.action_dim = action_dim
@@ -98,7 +98,7 @@ class ActorCritic():
             self.target_critic = self.get_critic_NN()
             self.target_critic.set_weights(self.critic.get_weights())
        
-        self.lr = 0.0001
+        self.lr = 0.001
         self.critic_optimizer = tf.keras.optimizers.Adam(self.lr)
         
 
@@ -132,7 +132,7 @@ class ActorCritic():
             
             critic_value_1, critic_value_2 = self.critic(state_batch)
             critic_pred_1, critic_pred_2 = tf.reduce_sum(tf.multiply(critic_value_1,mask), axis=1), tf.reduce_sum(tf.multiply(critic_value_2,mask), axis=1)
-            critic_loss = losses.huber_loss(y, critic_pred_1) + losses.huber_loss(y, critic_pred_2)
+            critic_loss = losses.MSE(y, critic_pred_1) + losses.MSE(y, critic_pred_2)
 
         
         critic_grad = tape.gradient(critic_loss, self.critic.trainable_variables)
@@ -223,7 +223,7 @@ class CaseOne():
         # g(x) = D * ||x||^2
         self.D = 0
 
-        self.num_episodes = 500
+        self.num_episodes = 1000
         self.state_dim = 1
         self.action_dim = 1
         self.AC = ActorCritic(self.state_dim, self.action_dim,False)
@@ -316,11 +316,12 @@ class CaseOne():
                 plt.show()
                 self.plots(n_x,V_t,A_t)
 
-            ep_reward_list.append(episodic_reward)
-            # Mean of last 40 episodes
-            avg_reward = np.mean(ep_reward_list[-40:])
-            print("Episode * {} * Avg Reward is ==> {}, eps ==> {}, lr ==> {}".format(ep, avg_reward,self.AC.eps, self.AC.lr))
-            avg_reward_list.append(avg_reward)
+            if (ep >= 100):
+                ep_reward_list.append(episodic_reward)
+                # Mean of last 40 episodes
+                avg_reward = np.mean(ep_reward_list[-40:])
+                print("Episode * {} * Avg Reward is ==> {}, eps ==> {}, lr ==> {}".format(ep, avg_reward,self.AC.eps, self.AC.lr))
+                avg_reward_list.append(avg_reward)
         # Plotting graph
         # Episodes versus Avg. Rewards
         plt.plot(avg_reward_list)
@@ -395,6 +396,8 @@ if __name__ == "__main__":
 
     lqr = CaseOne()
     n_x = 40
-    #V_t,A_t = LQR.Solution(lqr).create_solution(n_x)
-    V_t, A_t, base = LQR.Solution(lqr).dynamic_programming(n_x)
+    
+    V_t,A_t,base = LQR.Solution(lqr).create_solution(n_x)
+    #V_t, A_t, base = LQR.Solution(lqr).dynamic_programming(n_x)
+    
     lqr.run_episodes(n_x,V_t,A_t, base)

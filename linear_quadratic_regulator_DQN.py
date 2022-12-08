@@ -341,11 +341,12 @@ class CaseOne():
                 plt.show()
                 self.plots(n_x,V_t,A_t)
 
-            ep_reward_list.append(episodic_reward)
-            # Mean of last 40 episodes
-            avg_reward = np.mean(ep_reward_list[-40:])
-            print("Episode * {} * Avg Reward is ==> {}, eps ==> {}, lr ==> {}".format(ep, avg_reward,self.AC.eps, self.AC.lr))
-            avg_reward_list.append(avg_reward)
+            if (ep >= 100):
+                ep_reward_list.append(episodic_reward)
+                # Mean of last 40 episodes
+                avg_reward = np.mean(ep_reward_list[-40:])
+                print("Episode * {} * Avg Reward is ==> {}, eps ==> {}, lr ==> {}".format(ep, avg_reward,self.AC.eps, self.AC.lr))
+                avg_reward_list.append(avg_reward)
         # Plotting graph
         # Episodes versus Avg. Rewards
         plt.plot(avg_reward_list)
@@ -411,6 +412,8 @@ if __name__ == "__main__":
     
     lqr = CaseOne()
     n_x = 40
-    #V_t,A_t = LQR.Solution(lqr).create_solution(n_x)
-    V_t, A_t, base = LQR.Solution(lqr).dynamic_programming(n_x)
+    
+    V_t,A_t,base = LQR.Solution(lqr).create_solution(n_x)
+    #V_t, A_t, base = LQR.Solution(lqr).dynamic_programming(n_x)
+    
     lqr.run_episodes(n_x,V_t,A_t, base)
