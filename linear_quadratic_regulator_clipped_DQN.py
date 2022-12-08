@@ -86,89 +86,58 @@ class ActorCritic():
 
         self.buffer = experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
 
-        './Models/LQR_TD3_critic_1.h5'
+       
         # init the neural nets
         if (load_model):
-            self.critic_1 = tf.keras.models.load_model('./Models/LQR_TD3_critic_1.h5')
-            self.target_critic_1 = tf.keras.models.load_model('./Models/LQR_TD3_critic_1.h5')
+            self.critic = tf.keras.models.load_model('./Models/LQR_clipped_DQN_critic.h5')
+            self.target_critic = tf.keras.models.load_model('./Models/LQR_clipped_DQN_critic.h5')
 
-            self.critic_2 = tf.keras.models.load_model('./Models/LQR_TD3_critic_2.h5')
-            self.target_critic_2 = tf.keras.models.load_model('./Models/LQR_TD3_critic_2.h5')
-
+        
         else:
-            self.critic_1 = self.get_critic_NN()
-            self.target_critic_1 = self.get_critic_NN()
-            self.target_critic_1.set_weights(self.critic_1.get_weights())
-
-            self.critic_2 = self.get_critic_NN()
-            self.target_critic_2 = self.get_critic_NN()
-            self.target_critic_2.set_weights(self.critic_2.get_weights())
-
+            self.critic = self.get_critic_NN()
+            self.target_critic = self.get_critic_NN()
+            self.target_critic.set_weights(self.critic.get_weights())
+       
         self.lr = 0.0001
-        self.critic_optimizer_1 = tf.keras.optimizers.Adam(self.lr)
-        self.critic_optimizer_2 = tf.keras.optimizers.Adam(self.lr)
+        self.critic_optimizer = tf.keras.optimizers.Adam(self.lr)
+        
 
         self.eps = 1
         self.eps_decay = 0.9999
         self.lr_decay = 0.9999
         
     def save_model(self):
-        self.critic_1.save('./Models/LQR_TD3_critic_1.h5')
-        self.critic_2.save('./Models/LQR_TD3_critic_2.h5')
+        self.critic.save('./Models/LQR_clipped_DQN_critic.h5')
+        
     def update_lr(self):
         self.lr = self.lr * self.lr_decay
-        self.critic_optimizer_1 = tf.keras.optimizers.Adam(self.lr)
-        self.critic_optimizer_2 = tf.keras.optimizers.Adam(self.lr)
+        self.critic_optimizer = tf.keras.optimizers.Adam(self.lr)
+       
 
     def update_eps(self):
         self.eps = np.max([0.1,self.eps * self.eps_decay])
 
     @tf.function
     def update(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch):
-        # next_q_vals =  self.target_critic(next_state_batch, training=True)
         
-        # target_vals = tf.reshape(tf.reduce_max(next_q_vals, axis =1),[self.batch_size, 1])
-        
-        # y = reward_batch + (1-done_batch)* self.gamma*target_vals
-        
-        # self.critic.fit(state_batch,
-        # y = y,
-        # verbose = 0,
-        # batch_size =  self.batch_size)
-        
-        next_q_vals_1 =  self.target_critic_1(next_state_batch)
-        next_q_vals_2 =  self.target_critic_2(next_state_batch)
-            
-        target_vals_1 = tf.reshape(tf.reduce_min(next_q_vals_1, axis =1),[self.batch_size,1])
-        target_vals_2 = tf.reshape(tf.reduce_min(next_q_vals_2, axis =1),[self.batch_size,1])
-        target_vals = tf.concat([target_vals_1, target_vals_2], axis = -1)
+        target_1, target_2 = self.target_critic(next_state_batch)
+        target_1, target_2 = tf.reduce_min(target_1, axis =1), tf.reduce_min(target_2, axis =1)
+        target_vals =  tf.minimum(target_1, target_2)
 
-        y = reward_batch + (1-done_batch)* self.gamma*tf.reshape(tf.reduce_min(target_vals, axis =1),[self.batch_size,1])
-        y = tf.reshape(y,[self.batch_size,])
+        y = tf.stop_gradient(reward_batch + (1-done_batch)* self.gamma*target_vals)
         mask = tf.reshape(tf.one_hot(action_batch, self.num_a, dtype=tf.float32),[self.batch_size, self.num_a])
 
         with tf.GradientTape() as tape:
+            tape.watch(self.critic.trainable_variables)
             
-            critic_value = self.critic_1(state_batch)
-            critic_pred = tf.reduce_sum(tf.multiply(critic_value,mask), axis=1)
-            #critic_loss = tf.reduce_mean(tf.math.square(y-critic_value))
-            critic_loss = losses.MSE(y,critic_pred)
+            critic_value_1, critic_value_2 = self.critic(state_batch)
+            critic_pred_1, critic_pred_2 = tf.reduce_sum(tf.multiply(critic_value_1,mask), axis=1), tf.reduce_sum(tf.multiply(critic_value_2,mask), axis=1)
+            critic_loss = losses.huber_loss(y, critic_pred_1) + losses.huber_loss(y, critic_pred_2)
+
         
+        critic_grad = tape.gradient(critic_loss, self.critic.trainable_variables)
         
-        critic_grad = tape.gradient(critic_loss, self.critic_1.trainable_variables)
-        #critic_grad, _ = tf.clip_by_global_norm(critic_grad, 5.0)
-        self.critic_optimizer_1.apply_gradients(zip(critic_grad, self.critic_1.trainable_variables))
-        
-        with tf.GradientTape() as tape:
-            
-            critic_value = self.critic_2(state_batch)
-            critic_pred = tf.reduce_sum(tf.multiply(critic_value,mask), axis=1)
-            #critic_loss = tf.reduce_mean(tf.math.square(y-critic_value))
-            critic_loss = losses.MSE(y,critic_pred)
-        
-        critic_grad = tape.gradient(critic_loss, self.critic_2.trainable_variables)
-        #critic_grad, _ = tf.clip_by_global_norm(critic_grad, 5.0)
-        self.critic_optimizer_2.apply_gradients(zip(critic_grad, self.critic_2.trainable_variables))
+        self.critic_optimizer.apply_gradients(zip(critic_grad, self.critic.trainable_variables))
     
     
     def learn(self):
@@ -196,26 +165,27 @@ class ActorCritic():
         last_init = tf.random_uniform_initializer(minval=-0.003, maxval=0.003)
 
         state_input = layers.Input(shape =(self.state_dim+1,))
+        
 
-        out = layers.BatchNormalization()(state_input)
-    
-        out = layers.Dense(512, activation = 'relu')(out)
-        out = layers.BatchNormalization()(out)
-        out = layers.Dense(512, activation = 'relu')(out)
-        out = layers.Dense(self.num_a, kernel_initializer= last_init)(out)
+       
+       
+        out_1 = layers.Dense(512, activation = 'relu')(state_input)
+        out_1 = layers.Dense(512, activation = 'relu')(out_1)
+        out_1 = layers.Dense(1, kernel_initializer= last_init)(out_1)
 
-        model = keras.Model(inputs = state_input, outputs = out)
-        model.compile(
-            optimizer=tf.keras.optimizers.Adam(0.0001),
-            loss=tf.keras.losses.MeanSquaredError(),
-            metrics=[tf.keras.metrics.MeanSquaredError()],
-        )
+        out_2 = layers.Dense(512, activation = 'relu')(state_input)
+        out_2 = layers.Dense(512, activation = 'relu')(out_2)
+        out_2 = layers.Dense(self.num_a, kernel_initializer= last_init)(out_2)
+
+
+
+        model = keras.Model(inputs = state_input, outputs = [out_1,out_2])
+
         return model
 
     def epsilon_greedy(self, state, eps):
 
-        q_vals_1 = self.critic_1(state)
-        q_vals_2 = self.critic_2(state)
+        q_vals_1, q_vals_2 = self.critic(state)
         
         if (eps > np.random.rand()):
            
@@ -253,7 +223,7 @@ class CaseOne():
         # g(x) = D * ||x||^2
         self.D = 0
 
-        self.num_episodes = 1000
+        self.num_episodes = 500
         self.state_dim = 1
         self.action_dim = 1
         self.AC = ActorCritic(self.state_dim, self.action_dim,False)
@@ -295,13 +265,13 @@ class CaseOne():
                 else:
                     return True
 
-    def run_episodes(self):
+    def run_episodes(self, n_x,V_t,A_t, base):
         ep_reward_list = []
         # To store average reward history of last few episodes
         avg_reward_list = []
         for ep in range(self.num_episodes):
             X = np.zeros((self.N), dtype= np.float32)
-            X[0] = 2*np.random.rand() - 2
+            X[0] = 2.5*np.random.rand() - 2.5
             n=0
             episodic_reward = 0
             while(True):
@@ -315,7 +285,7 @@ class CaseOne():
                 
                 reward = self.f(n,X[n], action)
 
-                X[n+1] = X[n] + (X[n] + action)* self.dt + self.sig * np.sqrt(self.dt) * np.random.normal()
+                X[n+1] = (X[n] + action) + self.sig * np.random.normal()
                 
                 new_state = np.array([n+1,X[n+1]], np.float32)
                 new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
@@ -327,14 +297,24 @@ class CaseOne():
                 # warm up
                 
                 self.AC.buffer.record((state,action_ind,reward, new_state, done))
-                self.AC.learn()
-                self.AC.update_target(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
-                self.AC.update_target(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
+                if (ep >= 100):
+                    self.AC.learn()
+                    self.AC.update_target(self.AC.target_critic.variables, self.AC.critic.variables)
+                
                 if (done):
                     break
                 
                 n += 1
                 self.AC.update_lr()
+
+            if (ep % 100 == 0 and ep != 0):
+                plt.plot(avg_reward_list)
+                plt.hlines(base,xmin = 0, xmax = len(avg_reward_list), color = 'black', label = 'baseline: {}'.format(base))
+                plt.xlabel("Episode")
+                plt.ylabel("Avg. Epsiodic Reward")
+                plt.legend()
+                plt.show()
+                self.plots(n_x,V_t,A_t)
 
             ep_reward_list.append(episodic_reward)
             # Mean of last 40 episodes
@@ -349,6 +329,7 @@ class CaseOne():
 
         self.AC.save_model()
         plt.show()
+        self.plots(n_x,V_t,A_t)
 
     def plots(self,n_x,V_t,A_t):
         
@@ -368,16 +349,15 @@ class CaseOne():
         
 
         for ix in range(n_x):
-            print(state_space[ix])
+            
             state = np.array([0,state_space[ix]])
 
-            q_vals_1 = self.AC.critic_1(tf.expand_dims(tf.convert_to_tensor(state),0))     
+            q_vals_1, q_vals_2 = self.AC.critic(tf.expand_dims(tf.convert_to_tensor(state),0))     
             a_ind_1 = tf.argmin(q_vals_1[0])
             P1[ix] = self.AC.action_space[a_ind_1]
             v1 = tf.reduce_min(q_vals_1)
             V1[ix] = v1
-
-            q_vals_2 = self.AC.critic_2(tf.expand_dims(tf.convert_to_tensor(state),0))     
+     
             a_ind_2 = tf.argmin(q_vals_2[0])
             P2[ix] = self.AC.action_space[a_ind_2]
             v2 = tf.reduce_min(q_vals_2)
@@ -399,8 +379,8 @@ class CaseOne():
 
         for i in range(self.N-1):
             state = np.array([i,X[i]])
-            q_vals_1 = self.AC.critic_1(tf.expand_dims(tf.convert_to_tensor([i,X[i]]),0))
-            q_vals_2 = self.AC.critic_1(tf.expand_dims(tf.convert_to_tensor([i,X[i]]),0))
+            q_vals_1, q_vals_2 = self.AC.critic(tf.expand_dims(tf.convert_to_tensor([i,X[i]]),0))
+            
 
             a_ind_1 = tf.argmin(q_vals_1[0])
             a_1 = self.AC.action_space[a_ind_1]
@@ -415,6 +395,6 @@ if __name__ == "__main__":
 
     lqr = CaseOne()
     n_x = 40
-    V_t,A_t = LQR.Solution(lqr).create_solution(n_x)
-    lqr.run_episodes()
-    lqr.plots(n_x,V_t,A_t)
+    #V_t,A_t = LQR.Solution(lqr).create_solution(n_x)
+    V_t, A_t, base = LQR.Solution(lqr).dynamic_programming(n_x)
+    lqr.run_episodes(n_x,V_t,A_t, base)

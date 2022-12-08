@@ -67,7 +67,7 @@ class ActorCritic():
 
     def __init__(self, state_dim, action_dim, load_model):
 
-        self.batch_size = 128
+        self.batch_size = 32
         self.max_memory_size = 1000000
 
         self.state_dim = state_dim
@@ -80,54 +80,46 @@ class ActorCritic():
 
         self.buffer = experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
 
-        self.mean = np.zeros(1)
-        self.std_dev = 0.2*np.ones(1)
-
-        self.noice_Obj = OUActionNoise(self.mean, self.std_dev)
+        
         # init the neural nets
         if (load_model):
-            self.critic_1 = tf.keras.models.load_model('./Models/LQR_TD3_critic_1.h5')
-            self.target_critic_1 = tf.keras.models.load_model('./Models/LQR_TD3_critic_1.h5')
+            self.critic = tf.keras.models.load_model('./Models/LQR_TD3_critic.h5')
+            self.target_critic = tf.keras.models.load_model('./Models/LQR_TD3_critic.h5')
 
-            self.critic_2 = tf.keras.models.load_model('./Models/LQR_TD3_critic_2.h5')
-            self.target_critic_2 = tf.keras.models.load_model('./Models/LQR_TD3_critic_2.h5')
 
             self.actor = tf.keras.models.load_model('./Models/LQR_DDPG_Actor.h5')
             self.target_actor = tf.keras.models.load_model('./Models/LQR_DDPG_Actor.h5')
         else:
-            self.critic_1 = self.get_critic_NN()
-            self.target_critic_1 = self.get_critic_NN()
-            self.target_critic_1.set_weights(self.critic_1.get_weights())
+            self.critic = self.get_critic_NN()
+            self.target_critic = self.get_critic_NN()
+            self.target_critic.set_weights(self.critic.get_weights())
 
-            self.critic_2 = self.get_critic_NN()
-            self.target_critic_2 = self.get_critic_NN()
-            self.target_critic_2.set_weights(self.critic_2.get_weights())
+           
             
             self.actor = self.get_actor_NN()
             self.target_actor = self.get_actor_NN()
             self.target_actor.set_weights(self.actor.get_weights())
 
 
-        self.critic_lr = 0.0001
-        self.critic_optimizer_1 = tf.keras.optimizers.Adam(self.critic_lr)
-        self.critic_optimizer_2 = tf.keras.optimizers.Adam(self.critic_lr)
-        self.actor_lr = 0.0001
+        self.critic_lr = 0.000002
+        self.critic_optimizer = tf.keras.optimizers.Adam(self.critic_lr)
+       
+        self.actor_lr = 0.000001
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
       
-        self.var = 2
-        self.var_decay = 0.999
-        self.lr_decay = 1
+        self.var = 0.2
+        self.var_decay = 1
+        self.lr_decay = 0.9999
 
        
     def save_model(self):
-        self.critic_1.save('./Models/LQR_TD3_critic_1.h5')
-        self.critic_1.save('./Models/LQR_TD3_critic_2.h5')
+        self.critic.save('./Models/LQR_TD3_critic.h5')
+        
         self.actor.save('./Models/LQR_TD3_actor.h5')
     def update_lr(self):
         self.critic_lr = self.critic_lr * self.lr_decay
-        self.critic_optimizer_1 = tf.keras.optimizers.Adam(self.critic_lr)
-        self.critic_optimizer_2 = tf.keras.optimizers.Adam(self.critic_lr)
-
+        self.critic_optimizer = tf.keras.optimizers.Adam(self.critic_lr)
+        
         self.actor_lr = self.actor_lr * self.lr_decay
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
 
@@ -137,49 +129,38 @@ class ActorCritic():
     @tf.function
     def update_critic(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch):
         target_actions = self.target_policy(next_state_batch) 
-        target_1 = self.target_critic_1([next_state_batch, target_actions])
-        target_2 = self.target_critic_2([next_state_batch, target_actions])
-        target_vals = tf.concat([target_1, target_2], axis = -1)
+        target_1, target_2 = self.target_critic([next_state_batch, target_actions])
+        
+        target_vals =  tf.minimum(target_1, target_2)
 
-        y = reward_batch + (1-done_batch)* self.gamma*tf.reduce_min(target_vals, axis =1)
+        y = tf.stop_gradient(reward_batch + (1-done_batch)* self.gamma*target_vals)
 
         with tf.GradientTape() as tape:
+            tape.watch(self.critic.trainable_variables)
             
-            critic_value = self.critic_1([state_batch, action_batch])
-            #critic_loss = tf.math.reduce_mean(tf.math.square(y- critic_value))
-            critic_loss = losses.MSE(y, critic_value)
+            critic_value_1, critic_value_2 = self.critic([state_batch, action_batch])
+            
+            critic_loss = losses.huber_loss(y, critic_value_1) + losses.huber_loss(y, critic_value_2)
 
         
-        critic_grad = tape.gradient(critic_loss, self.critic_1.trainable_variables)
-        #critic_grad, _ = tf.clip_by_global_norm(critic_grad, 5.0)
-        self.critic_optimizer_1.apply_gradients(zip(critic_grad, self.critic_1.trainable_variables))
-
-
-        with tf.GradientTape() as tape:
-            
-            critic_value = self.critic_2([state_batch, action_batch])
-            #critic_loss = tf.math.reduce_mean(tf.math.square(y- critic_value))
-            critic_loss = losses.MSE(y, critic_value)
-
+        critic_grad = tape.gradient(critic_loss, self.critic.trainable_variables)
         
-        critic_grad = tape.gradient(critic_loss, self.critic_2.trainable_variables)
-        #critic_grad, _ = tf.clip_by_global_norm(critic_grad, 5.0)
-        self.critic_optimizer_2.apply_gradients(zip(critic_grad, self.critic_2.trainable_variables))
+        self.critic_optimizer.apply_gradients(zip(critic_grad, self.critic.trainable_variables))
 
 
        
 
     @tf.function
     def update_actor(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch):
-       
+        
         with tf.GradientTape() as tape:
-            
+            tape.watch(self.actor.trainable_variables)
             actions = self.actor(state_batch)
-            critic_value = self.critic_1([state_batch, actions])
-
-            actor_loss = tf.math.reduce_mean(critic_value)
+            critic_value_1,critic_value_2 = self.critic([state_batch, actions])
+            actor_loss = tf.math.reduce_mean(critic_value_1)
+            
         actor_grad = tape.gradient(actor_loss, self.actor.trainable_variables)
-        #actor_grad, _ = tf.clip_by_global_norm(actor_grad, 5.0)
+        
         self.actor_optimizer.apply_gradients(
             zip(actor_grad, self.actor.trainable_variables)
         )
@@ -216,24 +197,23 @@ class ActorCritic():
     def get_critic_NN(self):
         # input [state, action]
         last_init = tf.random_uniform_initializer(minval=-0.003, maxval=0.003)
+
         state_input = layers.Input(shape =(self.state_dim+1,))
+        action_input = layers.Input(shape =(self.action_dim,))
 
-        
-        state_out = layers.Dense(128, activation='relu')(state_input)
-        state_out = layers.BatchNormalization()(state_out)
-        state_out = layers.Dense(256, activation ='relu')(state_out)
+        input = tf.concat([state_input, action_input],1)
+       
+        out_1 = layers.Dense(512, activation = 'relu')(input)
+        out_1 = layers.Dense(512, activation = 'relu')(out_1)
+        out_1 = layers.Dense(1, kernel_initializer= last_init)(out_1)
 
-        action_input = layers.Input(shape = (self.action_dim,))
-        action_out = layers.Dense(256, activation = 'relu')(action_input)
-        action_out = layers.BatchNormalization()(action_out)
+        out_2 = layers.Dense(512, activation = 'relu')(input)
+        out_2 = layers.Dense(512, activation = 'relu')(out_2)
+        out_2 = layers.Dense(1, kernel_initializer= last_init)(out_2)
 
-        concat = layers.Concatenate()([state_out, action_out])
 
-        out = layers.Dense(512, activation = 'relu')(concat)
-        out = layers.Dense(512, activation = 'relu')(out)
-        out = layers.Dense(1, kernel_initializer= last_init)(out)
 
-        model = keras.Model(inputs = [state_input, action_input], outputs = out)
+        model = keras.Model(inputs = [state_input, action_input], outputs = [out_1,out_2])
 
         return model
 
@@ -294,10 +274,10 @@ class CaseOne():
         # g(x) = D * ||x||^2
         self.D = 0
 
-        self.num_episodes = 5000
+        self.num_episodes = 300
         self.state_dim = 1
         self.action_dim = 1
-        self.AC = ActorCritic(self.state_dim, self.action_dim, False)
+        self.AC = ActorCritic(self.state_dim, self.action_dim, True)
 
         self.T = 1
         self.N = 20
@@ -339,7 +319,7 @@ class CaseOne():
         avg_reward_list = []
         for ep in range(self.num_episodes):
             X = np.zeros((self.N), dtype= np.float32)
-            X[0] = 2*np.random.rand() - 2
+            X[0] = 2.5*np.random.rand() - 2.5
             n=0
             episodic_reward = 0
             while(True):
@@ -350,7 +330,7 @@ class CaseOne():
 
                 reward = self.f(n,X[n], action)
 
-                X[n+1] = X[n] + (X[n] + action)* self.dt + self.sig * np.sqrt(self.dt) * np.random.normal()
+                X[n+1] =  (X[n] + action) + self.sig  * np.random.normal()
 
                 new_state = np.array([n+1,X[n+1]], np.float32)
                 new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
@@ -363,31 +343,32 @@ class CaseOne():
                 
                 self.AC.buffer.record((state,action,reward, new_state, done))
                 
-              
-                self.AC.learn(n)
-                
-                self.AC.update_target(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
-                self.AC.update_target(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
+                if (ep >= 100):
+                    self.AC.learn(n)
+                    
+                    if (n % 2 == 0 and n != 0):
+                        self.AC.update_target(self.AC.target_critic.variables, self.AC.critic.variables)
+                        self.AC.update_target(self.AC.target_actor.variables, self.AC.actor.variables)
+                        self.AC.update_lr()
+                        self.AC.update_var()
 
-                if (n % 2 == 0 and n != 0):
-                    self.AC.update_target(self.AC.target_actor.variables, self.AC.actor.variables)
+                n += 1
+                
 
                 if (done):
                     break
                 
-                if (n == self.N-2):
-                    break
-                n += 1
-                self.AC.update_lr()
-                self.AC.update_var()
+               
+                
 
 
             if (ep % 100 == 0 and ep != 0):
-                
+                self.AC.var = 0.1 
                 plt.plot(avg_reward_list)
-                plt.hlines(base,xmin = 0, xmax = len(avg_reward_list))
+                plt.hlines(base,xmin = 0, xmax = len(avg_reward_list), color = 'black', label = 'baseline: {}'.format(base))
                 plt.xlabel("Episode")
                 plt.ylabel("Avg. Epsiodic Reward")
+                plt.legend()
                 plt.show()
                 self.plots(n_x,V_t,A_t)
             ep_reward_list.append(episodic_reward)
@@ -427,11 +408,10 @@ class CaseOne():
           
            P[ix] = action
 
-           v1 = self.AC.critic_1([tf.expand_dims(tf.convert_to_tensor(state),0),action])
+           v1,v2 = self.AC.critic([tf.expand_dims(tf.convert_to_tensor(state),0),action])
            
            V1[ix] = v1
-           v2 = self.AC.critic_2([tf.expand_dims(tf.convert_to_tensor(state),0),action])
-           
+          
            V2[ix] = v2
         
         ax[0].plot(state_space, V1, label = 'critic_1')

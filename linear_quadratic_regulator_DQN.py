@@ -102,7 +102,7 @@ class ActorCritic():
         self.critic_optimizer = tf.keras.optimizers.Adam(self.lr)
 
         self.eps = 1
-        self.eps_decay = 0.9999
+        self.eps_decay = 1
         self.lr_decay = 0.9999
         
     def save_model(self):
@@ -112,7 +112,7 @@ class ActorCritic():
         self.critic_optimizer = tf.keras.optimizers.Adam(self.lr)
 
     def update_eps(self):
-        self.eps = np.max([0.01,self.eps * self.eps_decay])
+        self.eps = np.max([0.1,self.eps * self.eps_decay])
 
     @tf.function
     def update(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch):
@@ -237,7 +237,7 @@ class CaseOne():
        # dX_t = (A X_t + B u_t) dt + sig * dB_t
         self.A = 1
         self.B = 1
-        self.sig = 1
+        self.sig = 0
 
         # f(x,u) = f_A ||x||^2 + f_B ||u||^2
         self.f_A = 1
@@ -246,7 +246,7 @@ class CaseOne():
         # g(x) = D * ||x||^2
         self.D = 0
 
-        self.num_episodes = 2
+        self.num_episodes = 1000
         self.state_dim = 1
         self.action_dim = 1
         self.AC = ActorCritic(self.state_dim, self.action_dim,False)
@@ -288,13 +288,13 @@ class CaseOne():
                 else:
                     return True
 
-    def run_episodes(self):
+    def run_episodes(self,n_x,V_t,A_t, base):
         ep_reward_list = []
         # To store average reward history of last few episodes
         avg_reward_list = []
         for ep in range(self.num_episodes):
             X = np.zeros((self.N), dtype= np.float32)
-            X[0] = 2*np.random.rand() - 2
+            X[0] = 2.5*np.random.rand() - 2.5
             n=0
             episodic_reward = 0
             while(True):
@@ -308,7 +308,7 @@ class CaseOne():
                 
                 reward = self.f(n,X[n], action)
 
-                X[n+1] = X[n] + (X[n] + action)* self.dt + self.sig * np.sqrt(self.dt) * np.random.normal()
+                X[n+1] = (self.A * X[n] + self.B * action) + self.sig * np.random.normal()
                 
                 new_state = np.array([n+1,X[n+1]], np.float32)
                 new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
@@ -318,15 +318,28 @@ class CaseOne():
                 episodic_reward += reward
 
                 # warm up
+                if (ep >= 100):
+                    self.AC.eps_decay = 0.999
+                    self.AC.buffer.record((state,action_ind,reward, new_state, done))
+                    self.AC.learn()
+                    self.AC.update_target(self.AC.target_critic.variables, self.AC.critic.variables)
+                self.AC.update_lr()
                 
-                self.AC.buffer.record((state,action_ind,reward, new_state, done))
-                self.AC.learn()
-                self.AC.update_target(self.AC.target_critic.variables, self.AC.critic.variables)
+                n += 1
                 if (done):
                     break
                 
-                n += 1
-                self.AC.update_lr()
+                
+                
+            
+            if (ep % 100 == 0 and ep != 0):
+                plt.plot(avg_reward_list)
+                plt.hlines(base,xmin = 0, xmax = len(avg_reward_list), color = 'black', label = 'baseline: {}'.format(base))
+                plt.xlabel("Episode")
+                plt.ylabel("Avg. Epsiodic Reward")
+                plt.legend()
+                plt.show()
+                self.plots(n_x,V_t,A_t)
 
             ep_reward_list.append(episodic_reward)
             # Mean of last 40 episodes
@@ -341,7 +354,8 @@ class CaseOne():
 
         self.AC.save_model()
         plt.show()
-
+        self.plots(n_x,V_t,A_t)
+    
     def plots(self,n_x,V_t,A_t):
         
         n_a = 20
@@ -355,13 +369,12 @@ class CaseOne():
         P = np.zeros(n_x)
 
         for ix in range(n_x):
-            print(state_space[ix])
+            
             state = np.array([0,state_space[ix]])
             q_vals = self.AC.critic(tf.expand_dims(tf.convert_to_tensor(state),0))
-            print(q_vals)
+            
             a_ind = tf.argmin(q_vals[0])
-            print(a_ind)
-
+            
             P[ix] = self.AC.action_space[a_ind]
 
             v = tf.reduce_min(q_vals)
@@ -394,15 +407,10 @@ class CaseOne():
 
 if __name__ == "__main__":
 
+   
+    
     lqr = CaseOne()
     n_x = 40
-    fig, ax = plt.subplots(2)
-    
     #V_t,A_t = LQR.Solution(lqr).create_solution(n_x)
-    
-
     V_t, A_t, base = LQR.Solution(lqr).dynamic_programming(n_x)
-    print('base cost', base)
-    plt.show()
-    lqr.run_episodes()
-    lqr.plots(n_x,V_t,A_t)
+    lqr.run_episodes(n_x,V_t,A_t, base)
