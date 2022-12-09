@@ -70,18 +70,18 @@ class ActorCritic():
 
     def __init__(self, state_dim, action_dim,load_model):
 
-        self.batch_size = 32
+        self.batch_size = 128
         self.max_memory_size = 1000000
 
         self.state_dim = state_dim
         self.action_dim = action_dim
 
-        self.gamma = 0.99
-        self.tau = 0.005
+        self.gamma = 1
+        self.tau = 0.01
         self.lower_action_bound = -2
         self.upper_action_bound = 2
 
-        self.action_space = np.linspace(self.lower_action_bound,self.upper_action_bound,40)
+        self.action_space = np.linspace(self.lower_action_bound,self.upper_action_bound,100)
         self.num_a = len(self.action_space)
 
         self.buffer = experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
@@ -98,7 +98,7 @@ class ActorCritic():
             self.target_critic.set_weights(self.critic.get_weights())
 
 
-        self.lr = 0.0001
+        self.lr = 0.000025
         self.critic_optimizer = tf.keras.optimizers.Adam(self.lr)
 
         self.eps = 1
@@ -237,16 +237,16 @@ class CaseOne():
        # dX_t = (A X_t + B u_t) dt + sig * dB_t
         self.A = 1
         self.B = 1
-        self.sig = 0
+        self.sig = 1
 
         # f(x,u) = f_A ||x||^2 + f_B ||u||^2
         self.f_A = 1
         self.f_B = 1
 
         # g(x) = D * ||x||^2
-        self.D = 0
+        self.D = 1
 
-        self.num_episodes = 1000
+        self.num_episodes = 2100
         self.state_dim = 1
         self.action_dim = 1
         self.AC = ActorCritic(self.state_dim, self.action_dim,False)
@@ -257,6 +257,10 @@ class CaseOne():
 
         self.r = 0
         
+        self.dashboard_num = 50
+        self.mean_abs_error_v = []
+        self.mean_abs_error_P = []
+      
     
     def f(self, n,x,a):
         
@@ -277,7 +281,7 @@ class CaseOne():
                 return True
 
     def check_if_done(self,n,x):
-        if n == self.N-2:
+        if n == self.N-1:
             return True
         else:
             if self.r == 0:
@@ -292,54 +296,57 @@ class CaseOne():
         ep_reward_list = []
         # To store average reward history of last few episodes
         avg_reward_list = []
+        X = np.zeros((self.N), dtype= np.float32)
+        X[0] = 2.5*np.random.rand() - 2.5
         for ep in range(self.num_episodes):
-            X = np.zeros((self.N), dtype= np.float32)
-            X[0] = 2.5*np.random.rand() - 2.5
+            
             n=0
             episodic_reward = 0
             while(True):
                 state = np.array([n,X[n]], np.float32)
                 state = tf.expand_dims(tf.convert_to_tensor(state),0)
-
+                done = self.check_if_done(n,state)
                 eps = self.AC.eps
                 self.AC.update_eps()
 
-                action,action_ind = self.AC.epsilon_greedy(state,eps)
-                
-                reward = self.f(n,X[n], action)
+                if (done):
+                    reward = self.g(n,X[n])
+                    action,action_ind = self.AC.epsilon_greedy(state,eps)
+                    X = np.zeros((self.N), dtype= np.float32)
+                    X[0] = 2.5*np.random.rand() - 2.5
+                    new_state = np.array([0,X[0]], np.float32)
+                    new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
+                         
+                else:
+                    action,action_ind = self.AC.epsilon_greedy(state,eps)
+                    
+                    reward = self.f(n,X[n], action)
 
-                X[n+1] = (self.A * X[n] + self.B * action) + self.sig * np.random.normal()
-                
-                new_state = np.array([n+1,X[n+1]], np.float32)
-                new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
-
-                done = self.check_if_done(n,new_state)
-                
+                    X[n+1] = (self.A * X[n] + self.B * action) + self.sig * np.random.normal()
+                    
+                    new_state = np.array([n+1,X[n+1]], np.float32)
+                    new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
+     
                 episodic_reward += reward
 
                 # warm up
                 if (ep >= 100):
-                    self.AC.eps_decay = 0.999
+                    self.AC.eps_decay = 0.9995
                     self.AC.buffer.record((state,action_ind,reward, new_state, done))
                     self.AC.learn()
                     self.AC.update_target(self.AC.target_critic.variables, self.AC.critic.variables)
                 self.AC.update_lr()
                 
-                n += 1
+                
                 if (done):
                     break
-                
+                else:
+                    n += 1
                 
                 
             
-            if (ep % 100 == 0 and ep != 0):
-                plt.plot(avg_reward_list)
-                plt.hlines(base,xmin = 0, xmax = len(avg_reward_list), color = 'black', label = 'baseline: {}'.format(base))
-                plt.xlabel("Episode")
-                plt.ylabel("Avg. Epsiodic Reward")
-                plt.legend()
-                plt.show()
-                self.plots(n_x,V_t,A_t)
+            if (ep % self.dashboard_num == 0 and ep > 100): 
+                self.dashboard(n_x,V_t,A_t,avg_reward_list)
 
             if (ep >= 100):
                 ep_reward_list.append(episodic_reward)
@@ -349,14 +356,102 @@ class CaseOne():
                 avg_reward_list.append(avg_reward)
         # Plotting graph
         # Episodes versus Avg. Rewards
-        plt.plot(avg_reward_list)
-        plt.xlabel("Episode")
-        plt.ylabel("Avg. Epsiodic Reward")
+        
 
         self.AC.save_model()
-        plt.show()
-        self.plots(n_x,V_t,A_t)
+        self.dashboard(n_x,V_t,A_t,avg_reward_list)
     
+
+    def dashboard(self,n_x,V_t,A_t,avg_reward_list):
+
+        state_space = np.linspace(-2,2, n_x)
+        
+        fig, ax = plt.subplots(2,3)
+        
+        V = np.zeros(n_x)
+
+        P = np.zeros(n_x)
+
+       
+        t0 = 1
+
+        ax[0][0].plot(avg_reward_list)
+        ax[0][0].set_xlabel('Episode')
+        ax[0][0].set_ylabel('Avg. Epsiodic Reward')
+        ax[0][0].hlines(base,xmin = 0, xmax = len(avg_reward_list), color = 'black', label = 'baseline: {}'.format(np.round(base,)))
+        ax[0][0].set_title('baseline value: {} \n Avg 100 Episodes: {}'.format(np.round(base,2), np.round(avg_reward_list[-1],2)))
+
+        for ix in range(n_x):
+            state = np.array([t0,state_space[ix]])
+            q_vals = self.AC.critic(tf.expand_dims(tf.convert_to_tensor(state),0))     
+            a_ind = tf.argmin(q_vals[0])
+            P[ix] = self.AC.action_space[a_ind]
+            v = tf.reduce_min(q_vals)
+            V[ix] = v
+     
+           
+          
+        
+
+        error_v_1 = np.abs(V_t[t0] - V)
+        self.mean_abs_error_v.append(np.mean(np.abs(V_t[t0] - V)))
+        
+
+        error_P_1 = np.abs(A_t[t0] - P)
+        self.mean_abs_error_P.append(np.mean(np.abs(A_t[t0] - P)))
+      
+        
+        ax[0][1].plot(state_space, V, label = 'approx value function')
+        
+        ax[0][1].plot(state_space, V_t[t0], label = 'true value function', color = 'black')
+        
+        ax[0][1].set_title('value function t = {}'.format(t0))
+
+        ax[0][2].plot(state_space, P, label = 'policy function approximation')
+        
+        ax[0][2].plot(state_space, A_t[t0],label = 'true policy function', color = 'black')
+        
+        ax[0][2].set_title('policy function t = {}'.format(t0))
+
+        ###########################################################
+        episode_ax = self.dashboard_num * np.linspace(1,len(self.mean_abs_error_P), len(self.mean_abs_error_P))
+
+        ax[1][1].scatter(episode_ax,  self.mean_abs_error_v, label = 'Mean Abs Error: {}'.format(np.round(np.mean(error_v_1),2)))
+        ax[1][1].plot(episode_ax,  self.mean_abs_error_v)
+        
+        
+
+        ax[1][1].set_title('abs error value function t = {} '.format(t0))
+        ax[1][1].legend()
+        ax[1][1].set_xlim([np.min(episode_ax)-1, np.max(episode_ax)+1])
+
+        ax[1][2].scatter(episode_ax, self.mean_abs_error_P, label = 'Mean Abs Error : {}'.format(np.round(np.mean(error_P_1),2)))
+        ax[1][2].plot(episode_ax, self.mean_abs_error_P)
+        
+
+        ax[1][2].set_title('abs error policy function t = {} '.format(t0))
+        ax[1][2].legend()
+        ax[1][2].set_xlim([np.min(episode_ax)-1, np.max(episode_ax)+1])
+        # terminal value function
+        for ix in range(n_x):
+
+            state = np.array([self.N-1,state_space[ix]])
+            q_vals = self.AC.critic(tf.expand_dims(tf.convert_to_tensor(state),0))     
+            a_ind = tf.argmin(q_vals[0])
+            P[ix] = self.AC.action_space[a_ind]
+            v = tf.reduce_min(q_vals)
+            V[ix] = v
+     
+              
+        ax[1][0].plot(state_space, V, label = 'approx value function')
+        
+        ax[1][0].plot(state_space, V_t[self.N-1], label = 'true value function', color = 'black')
+        
+        ax[1][0].set_title('terminal value function t = {}'.format(self.N-1))
+        fig.set_size_inches(w = 15, h= 7.5)
+        fig.tight_layout()
+        plt.subplots_adjust(wspace=0.15, hspace=0.3)
+        fig.savefig('.\Bilder_Episoden\DQN_Dashboard_Episode_{}'.format(len(avg_reward_list)))
     def plots(self,n_x,V_t,A_t):
         
         n_a = 20
@@ -369,9 +464,10 @@ class CaseOne():
 
         P = np.zeros(n_x)
 
+        t0 = self.N-1
         for ix in range(n_x):
             
-            state = np.array([0,state_space[ix]])
+            state = np.array([t0,state_space[ix]])
             q_vals = self.AC.critic(tf.expand_dims(tf.convert_to_tensor(state),0))
             
             a_ind = tf.argmin(q_vals[0])
@@ -384,12 +480,12 @@ class CaseOne():
         
         ax[0].plot(state_space, V)
         ax[0].set_title('value function')
-        ax[0].plot(state_space, V_t[0], label = 'true_solution')
+        ax[0].plot(state_space, V_t[t0], label = 'true_solution')
         ax[0].legend()
 
         ax[1].plot(state_space, P)
         ax[1].set_title('policy function')
-        ax[1].plot(state_space, A_t[0],label = 'true_solution')
+        ax[1].plot(state_space, A_t[t0],label = 'true_solution')
         ax[1].legend()
 
         X = np.zeros(self.N)

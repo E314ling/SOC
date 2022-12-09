@@ -65,13 +65,17 @@ class Solution():
             X[0] = 2*np.random.rand() - 2
 
             c = np.zeros(self.N)
-            for n in range(self.N-1):
-                x_ind = self.state_to_dicrete(X[n])
-                a = self.poli[n][x_ind]
-                c[n] = self.f_A * np.linalg.norm(X[n])**2 + self.f_B * np.linalg.norm(a)**2
+            for n in range(self.N):
 
-                X[n+1] = self.A * X[n] + self.B *a + self.sig * np.random.normal()
-            
+                x_ind = self.state_to_dicrete(X[n])
+                if (n== self.N-1):
+                    c[n] = self.D * np.linalg.norm(X[n])**2
+                else:
+                    a = self.poli[n][x_ind]
+                    c[n] = self.f_A * np.linalg.norm(X[n])**2 + self.f_B * np.linalg.norm(a)**2
+
+                    X[n+1] = self.A * X[n] + self.B *a + self.sig * np.random.normal()
+                #X[n+1] = (1 + self.A * self.dt)* X[n] + self.B * self.dt* a + np.sqrt(self.sig * self.dt)*np.random.normal()
             cum_cost[i] = np.sum(c)
         
         return self.V, self.poli, np.mean(cum_cost)
