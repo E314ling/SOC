@@ -132,7 +132,7 @@ class ActorCritic():
             
             critic_value_1, critic_value_2 = self.critic(state_batch)
             critic_pred_1, critic_pred_2 = tf.reduce_sum(tf.multiply(critic_value_1,mask), axis=1), tf.reduce_sum(tf.multiply(critic_value_2,mask), axis=1)
-            critic_loss = losses.MSE(y, critic_pred_1) + losses.MSE(y, critic_pred_2)
+            critic_loss = losses.huber_loss(y, critic_pred_1) + losses.huber_loss(y, critic_pred_2)
 
         
         critic_grad = tape.gradient(critic_loss, self.critic.trainable_variables)

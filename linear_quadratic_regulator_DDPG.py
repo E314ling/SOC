@@ -189,9 +189,9 @@ class ActorCritic():
         state_input = layers.Input(shape =(self.state_dim+1,))
 
         
-        state_out = layers.Dense(128, activation='relu')(state_input)
+        state_out = layers.Dense(256, activation='relu')(state_input)
         state_out = layers.BatchNormalization()(state_out)
-        state_out = layers.Dense(256, activation ='relu')(state_out)
+        
 
         action_input = layers.Input(shape = (self.action_dim,))
         action_out = layers.Dense(256, activation = 'relu')(action_input)
@@ -199,8 +199,7 @@ class ActorCritic():
 
         concat = layers.Concatenate()([state_out, action_out])
 
-        out = layers.Dense(512, activation = 'relu')(concat)
-        out = layers.Dense(512, activation = 'relu')(out)
+        out = layers.Dense(256, activation = 'relu')(concat)
         out = layers.Dense(1, kernel_initializer= last_init)(out)
 
         model = keras.Model(inputs = [state_input, action_input], outputs = out)
@@ -214,9 +213,9 @@ class ActorCritic():
 
         inputs = layers.Input(shape=(self.state_dim+1,))
        
-        out = layers.Dense(1024, activation="relu")(inputs)
+        out = layers.Dense(256, activation="relu")(inputs)
         out = layers.BatchNormalization()(out)
-        out = layers.Dense(512, activation="relu")(out)
+        out = layers.Dense(256, activation="relu")(out)
         outputs = layers.Dense(1, activation='tanh', kernel_initializer=last_init)(out)
 
         # Our upper bound is 2.0 .
@@ -261,9 +260,9 @@ class CaseOne():
         self.f_B = 1
 
         # g(x) = D * ||x||^2
-        self.D = 0
+        self.D = 1
 
-        self.num_episodes = 2100
+        self.num_episodes = 2200
         self.state_dim = 1
         self.action_dim = 1
         self.AC = ActorCritic(self.state_dim, self.action_dim, False)
@@ -343,7 +342,7 @@ class CaseOne():
                 # warm up
                 
                 self.AC.buffer.record((state,action,reward, new_state, done))
-                if (ep >= 100):
+                if (ep >= 200):
                     self.AC.learn()
                     
                     self.AC.update_target(self.AC.target_critic.variables, self.AC.critic.variables)
@@ -356,10 +355,10 @@ class CaseOne():
                 else:
                     n += 1
                 
-            if (ep % self.dashboard_num == 0 and ep > 100): 
+            if (ep % self.dashboard_num == 0 and ep > 200): 
                 self.dashboard(n_x,V_t,A_t,avg_reward_list)
 
-            if (ep >= 100):
+            if (ep >= 200):
                 self.AC.var = 0.1 
                 ep_reward_list.append(episodic_reward)
                 # Mean of last 40 episodes
