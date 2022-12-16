@@ -105,7 +105,7 @@ class Solution_2_D():
                     
                     c[n] = np.dot(y1,x) + np.dot(y2,a)
                     
-                    X[n+1] = np.dot(self.A,X[n]) + np.dot(self.B,a) + np.random.normal(2)
+                    X[n+1] = np.dot(self.A,X[n]) + np.dot(self.B,a) + self.sig*np.random.normal(2)
                 #X[n+1] = (1 + self.A * self.dt)* X[n] + self.B * self.dt* a + np.sqrt(self.sig * self.dt)*np.random.normal()
             cum_cost[i] = np.sum(c)
         

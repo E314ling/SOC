@@ -98,9 +98,9 @@ class ActorCritic():
             self.target_actor.set_weights(self.actor.get_weights())
 
 
-        self.critic_lr = 0.0002
+        self.critic_lr = 0.00001
         self.critic_optimizer = tf.keras.optimizers.Adam(self.critic_lr)
-        self.actor_lr = 0.0001
+        self.actor_lr = 0.00001
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
       
 
@@ -262,10 +262,10 @@ class CaseOne():
         # g(x) = D * ||x||^2
         self.D = 1
 
-        self.num_episodes = 2200
+        self.num_episodes = 1200
         self.state_dim = 1
         self.action_dim = 1
-        self.AC = ActorCritic(self.state_dim, self.action_dim, False)
+        self.AC = ActorCritic(self.state_dim, self.action_dim, True)
 
         self.T = 1
         self.N = 20

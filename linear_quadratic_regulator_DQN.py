@@ -6,31 +6,6 @@ import matplotlib.pyplot as plt
 
 import linear_quadratic_regulator_DP as LQR
 
-class OUActionNoise:
-    def __init__(self, mean, std_deviation, theta=0.15, dt=1e-2, x_initial=None):
-        self.theta = theta
-        self.mean = mean
-        self.std_dev = std_deviation
-        self.dt = dt
-        self.x_initial = x_initial
-        self.reset()
-
-    def __call__(self):
-       
-        x = (
-            self.x_prev
-            + self.theta * (self.mean - self.x_prev) * self.dt
-            + self.std_dev * np.sqrt(self.dt) * np.random.normal(size=self.mean.shape)
-        )
-       
-        self.x_prev = x
-        return x
-
-    def reset(self):
-        if self.x_initial is not None:
-            self.x_prev = self.x_initial
-        else:
-            self.x_prev = np.zeros_like(self.mean)
 
 class experience_memory():
 
@@ -70,14 +45,14 @@ class ActorCritic():
 
     def __init__(self, state_dim, action_dim,load_model):
 
-        self.batch_size = 128
+        self.batch_size = 512
         self.max_memory_size = 1000000
 
         self.state_dim = state_dim
         self.action_dim = action_dim
 
         self.gamma = 1
-        self.tau = 0.01
+        self.tau = 0.001
         self.lower_action_bound = -2
         self.upper_action_bound = 2
 
@@ -98,11 +73,11 @@ class ActorCritic():
             self.target_critic.set_weights(self.critic.get_weights())
 
 
-        self.lr = 0.000025
+        self.lr = 0.00025
         self.critic_optimizer = tf.keras.optimizers.Adam(self.lr)
 
         self.eps = 1
-        self.eps_decay = 1
+        self.eps_decay = 0.9999
         self.lr_decay = 0.9999
         
     def save_model(self):
@@ -113,6 +88,8 @@ class ActorCritic():
 
     def update_eps(self):
         self.eps = np.max([0.1,self.eps * self.eps_decay])
+
+    
 
     @tf.function
     def update(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch):
@@ -141,7 +118,7 @@ class ActorCritic():
             critic_pred = tf.reduce_sum(tf.multiply(critic_value,mask), axis=1)
             
             #critic_loss = tf.reduce_mean(tf.math.square(y-critic_value))
-            critic_loss = losses.huber_loss(y,critic_pred)
+            critic_loss = losses.MSE(y,critic_pred)
         
         
         critic_grad = tape.gradient(critic_loss, self.critic.trainable_variables)
@@ -178,8 +155,10 @@ class ActorCritic():
 
         record_range = min(self.buffer.buffer_counter, self.buffer.buffer_capacity)
 
-        batch_indices = np.random.choice(record_range, self.batch_size)
         
+        batch_indices = np.random.choice(record_range, self.batch_size, replace= False)
+        
+
         state_batch = tf.convert_to_tensor(self.buffer.state_buffer[batch_indices])
         action_batch = tf.convert_to_tensor(self.buffer.action_buffer[batch_indices])
         reward_batch = tf.convert_to_tensor(self.buffer.reward_buffer[batch_indices])
@@ -201,17 +180,13 @@ class ActorCritic():
 
         out = layers.BatchNormalization()(state_input)
     
-        out = layers.Dense(512, activation = 'relu')(out)
+        out = layers.Dense(512, activation = 'tanh')(out)
         out = layers.BatchNormalization()(out)
-        out = layers.Dense(512, activation = 'relu')(out)
+        out = layers.Dense(512, activation = 'tanh')(out)
         out = layers.Dense(self.num_a, kernel_initializer= last_init)(out)
 
         model = keras.Model(inputs = state_input, outputs = out)
-        model.compile(
-            optimizer=tf.keras.optimizers.Adam(0.0001),
-            loss=tf.keras.losses.MeanSquaredError(),
-            metrics=[tf.keras.metrics.MeanSquaredError()],
-        )
+        
         return model
 
     def epsilon_greedy(self, state, eps):
@@ -246,7 +221,7 @@ class CaseOne():
         # g(x) = D * ||x||^2
         self.D = 1
 
-        self.num_episodes = 2100
+        self.num_episodes = 5100
         self.state_dim = 1
         self.action_dim = 1
         self.AC = ActorCritic(self.state_dim, self.action_dim,False)
@@ -261,7 +236,28 @@ class CaseOne():
         self.mean_abs_error_v = []
         self.mean_abs_error_P = []
       
-    
+    def init_buffer(self, warm_up):
+        n = self.N-1
+        for step in range(2*warm_up):
+            X = 2*np.random.rand() - 2
+            reward = self.g(n,X)
+            state = np.array([n,X], np.float32)
+            state = tf.expand_dims(tf.convert_to_tensor(state),0)
+            action,action_ind = self.AC.epsilon_greedy(state,self.AC.eps)
+            
+            done = self.check_if_done(n,state)
+            X_start = 2*np.random.rand() - 2
+            new_state = np.array([0,X_start], np.float32)
+            new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
+
+            self.AC.buffer.record((state,action_ind,reward, new_state, done))
+        
+        for i in range(self.AC.buffer.batch_size):
+            print('learn terminal values')
+            self.AC.learn()
+            self.AC.update_target(self.AC.target_critic.variables, self.AC.critic.variables)
+        
+
     def f(self, n,x,a):
         
         return np.float32(self.f_B *np.linalg.norm(a)**2 + self.f_A*np.linalg.norm(x)**2)
@@ -297,7 +293,11 @@ class CaseOne():
         # To store average reward history of last few episodes
         avg_reward_list = []
         X = np.zeros((self.N), dtype= np.float32)
-        X[0] = 2.5*np.random.rand() - 2.5
+        X[0] = 2*np.random.rand() - 2
+
+        # fill buffer with terminal samples
+        self.init_buffer(self.AC.buffer.batch_size)
+        
         for ep in range(self.num_episodes):
             
             n=0
@@ -313,7 +313,7 @@ class CaseOne():
                     reward = self.g(n,X[n])
                     action,action_ind = self.AC.epsilon_greedy(state,eps)
                     X = np.zeros((self.N), dtype= np.float32)
-                    X[0] = 2.5*np.random.rand() - 2.5
+                    X[0] = 2*np.random.rand() - 2
                     new_state = np.array([0,X[0]], np.float32)
                     new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
                          
@@ -330,11 +330,11 @@ class CaseOne():
                 episodic_reward += reward
 
                 # warm up
-                if (ep >= 100):
-                    self.AC.eps_decay = 0.9995
-                    self.AC.buffer.record((state,action_ind,reward, new_state, done))
-                    self.AC.learn()
-                    self.AC.update_target(self.AC.target_critic.variables, self.AC.critic.variables)
+               
+                    
+                self.AC.buffer.record((state,action_ind,reward, new_state, done))
+                self.AC.learn()
+                self.AC.update_target(self.AC.target_critic.variables, self.AC.critic.variables)
                 self.AC.update_lr()
                 
                 
@@ -345,15 +345,15 @@ class CaseOne():
                 
                 
             
-            if (ep % self.dashboard_num == 0 and ep > 100): 
+            if (ep % self.dashboard_num == 0 and ep > 0): 
                 self.dashboard(n_x,V_t,A_t,avg_reward_list)
 
-            if (ep >= 100):
-                ep_reward_list.append(episodic_reward)
-                # Mean of last 40 episodes
-                avg_reward = np.mean(ep_reward_list[-40:])
-                print("Episode * {} * Avg Reward is ==> {}, eps ==> {}, lr ==> {}".format(ep, avg_reward,self.AC.eps, self.AC.lr))
-                avg_reward_list.append(avg_reward)
+            
+            ep_reward_list.append(episodic_reward)
+            # Mean of last 40 episodes
+            avg_reward = np.mean(ep_reward_list[-100:])
+            print("Episode * {} * Avg Reward is ==> {}, eps ==> {}, lr ==> {}".format(ep, avg_reward,self.AC.eps, self.AC.lr))
+            avg_reward_list.append(avg_reward)
         # Plotting graph
         # Episodes versus Avg. Rewards
         
@@ -376,6 +376,7 @@ class CaseOne():
         t0 = 1
 
         ax[0][0].plot(avg_reward_list)
+        ax[0][0].set_xlim([0,self.num_episodes])
         ax[0][0].set_xlabel('Episode')
         ax[0][0].set_ylabel('Avg. Epsiodic Reward')
         ax[0][0].hlines(base,xmin = 0, xmax = len(avg_reward_list), color = 'black', label = 'baseline: {}'.format(np.round(base,)))
@@ -389,10 +390,6 @@ class CaseOne():
             v = tf.reduce_min(q_vals)
             V[ix] = v
      
-           
-          
-        
-
         error_v_1 = np.abs(V_t[t0] - V)
         self.mean_abs_error_v.append(np.mean(np.abs(V_t[t0] - V)))
         
@@ -423,7 +420,7 @@ class CaseOne():
 
         ax[1][1].set_title('abs error value function t = {} '.format(t0))
         ax[1][1].legend()
-        ax[1][1].set_xlim([np.min(episode_ax)-1, np.max(episode_ax)+1])
+        ax[1][1].set_xlim([0,self.num_episodes])
 
         ax[1][2].scatter(episode_ax, self.mean_abs_error_P, label = 'Mean Abs Error : {}'.format(np.round(np.mean(error_P_1),2)))
         ax[1][2].plot(episode_ax, self.mean_abs_error_P)
@@ -431,7 +428,7 @@ class CaseOne():
 
         ax[1][2].set_title('abs error policy function t = {} '.format(t0))
         ax[1][2].legend()
-        ax[1][2].set_xlim([np.min(episode_ax)-1, np.max(episode_ax)+1])
+        ax[1][2].set_xlim([0,self.num_episodes])
         # terminal value function
         for ix in range(n_x):
 
