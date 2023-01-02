@@ -231,7 +231,7 @@ class ActorCritic():
         
         #noice = self.noice_Obj()
       
-        sampled_actions = sampled_actions + np.random.normal(loc= 0, scale=self.var)
+        sampled_actions = sampled_actions + np.random.normal(loc= 0, scale=self.var, size=self.action_dim)
 
         legal_action = np.clip(sampled_actions, self.lower_action_bound, self.upper_action_bound)
 
