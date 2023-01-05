@@ -361,9 +361,9 @@ class CaseOne():
                     reward = self.f(n,X[n], action)
                     #print('X[n], action,reward ', X[n], action,reward )
                     
-                    #X[n+1] =  X[n] + (X[n] - action)*self.dt + np.sqrt(self.sig*self.dt)  * np.random.normal(size = 2)
+                    X[n+1] =  X[n] + (X[n] + action)*self.dt + np.sqrt(self.sig*self.dt)  * np.random.normal(size = 2)
                     
-                    X[n+1] =  (X[n] + action) + self.sig*np.random.normal(2)
+                    #X[n+1] =  (X[n] + action) + self.sig*np.random.normal(2)
                   
                     new_state = np.array([X[n+1][0],X[n+1][1]], np.float32)
                    
@@ -430,9 +430,8 @@ class CaseOne():
                     print('done')      
                 else:
 
-                 
-                    #X[n+1] =  X[n] + (X[n] - action)*self.dt + np.sqrt(self.sig*self.dt)  * np.random.normal(size = 2)
-                    X[n+1] =  (X[n] + action) + self.sig*np.random.normal(2)
+                    X[n+1] =  X[n] + (X[n] + action)*self.dt + np.sqrt(self.sig*self.dt)  * np.random.normal(size = 2)
+                    #X[n+1] =  (X[n] + action) + self.sig*np.random.normal(2)
                     print('X[n], action,X[n] + action, X[n+1]', X[n], action,X[n] + action, X[n+1])
                 if(done):
                     x[n:] = x[n]
@@ -454,8 +453,8 @@ class CaseOne():
             
     def dashboard(self,n_x,avg_reward_list, avg_stopping_list,actor_loss):
         self.run_simulation(10)
-        x_space = np.linspace(self.r1,self.r2, n_x)
-        y_space = np.linspace(self.r1,self.r2, n_x)
+        x_space = np.linspace(-self.r2,self.r2, n_x)
+        y_space = np.linspace(-self.r2,self.r2, n_x)
 
         fig = plt.figure()
         
@@ -542,7 +541,7 @@ class CaseOne():
 if __name__ == "__main__":
 
     lqr = CaseOne()
-    n_x = 30
+    n_x = 40
     
     #V_t, A_t, base = LQR.Solution(lqr).dynamic_programming(n_x)
     
