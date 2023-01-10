@@ -24,6 +24,7 @@ class Solution_2_D():
         self.P_t[-1] = self.D
         self.Q_t[-1] = 0
 
+        
         self.dt = self.T/self.N
 
         self.r = 0
