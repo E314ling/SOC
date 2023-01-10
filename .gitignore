@@ -1,5 +1,6 @@
 /.vscode
 /Bilder_Episoden
+/Bilder_SOC
 /rnn.ipynb
 /SOC_Model.h5
 /plotting_solution.py

@@ -67,7 +67,7 @@ class ActorCritic():
 
     def __init__(self, state_dim, action_dim, load_model):
 
-        self.batch_size = 1024
+        self.batch_size = 128
         self.max_memory_size = 100000
 
         self.state_dim = state_dim
@@ -108,11 +108,11 @@ class ActorCritic():
             self.target_actor.set_weights(self.actor.get_weights())
 
 
-        self.critic_lr = 0.00001
+        self.critic_lr = 0.0001
         self.critic_optimizer_1 = tf.keras.optimizers.Adam(self.critic_lr)
         self.critic_optimizer_2 = tf.keras.optimizers.Adam(self.critic_lr)
        
-        self.actor_lr = 0.00001
+        self.actor_lr = 0.0001
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
       
         self.var = 1
@@ -290,18 +290,17 @@ class CaseOne():
         # g(x) = D * ||x||^2
         self.D = np.identity(2)
 
-        self.num_episodes = 10100
+        self.num_episodes = 5000
         self.state_dim = 2
         self.action_dim = 2
         self.AC = ActorCritic(self.state_dim, self.action_dim, False)
 
         self.T = 1
-        self.N = 20
+        self.N = 40
         self.dt = self.T/self.N
 
-
         self.r = 0
-        self.dashboard_num = 500
+        self.dashboard_num = 100
         self.mean_abs_error_v1 = []
         self.mean_abs_error_v2 = []
         self.mean_abs_error_P_x_0 = []
@@ -378,7 +377,7 @@ class CaseOne():
                     #X[n+1] =  X[n] + (X[n] + action)*self.dt + np.sqrt(self.sig*self.dt)  * np.random.normal()
                     
                     X[n+1] =  (X[n] + action) + self.sig*np.random.normal(2)
-                    X[n+1] = np.clip(X[n+1], a_min= -2,a_max = 2)
+                    #X[n+1] = np.clip(X[n+1], a_min= -2,a_max = 2)
                     new_state = np.array([n+1,X[n+1][0],X[n+1][1]], np.float32)
                     new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
                 
@@ -401,7 +400,7 @@ class CaseOne():
                 else:
                     n += 1
 
-            if (ep % self.dashboard_num == 0 and ep >100):
+            if (ep % self.dashboard_num == 0 and ep > 100):
                 self.dashboard(n_x,V_t,A_t,avg_reward_list,base)
             
             if (ep >= 100):
@@ -431,9 +430,10 @@ class CaseOne():
         ax = fig.add_subplot(2, 4, 1)
         ax.plot(avg_reward_list)
         ax.set_xlabel('Episode')
+        ax.set_xlim([0,self.num_episodes])
         ax.set_ylabel('Avg. Epsiodic Reward')
-        ax.hlines(base,xmin = 0, xmax = len(avg_reward_list), color = 'black', label = 'baseline: {}'.format(np.round(base,)))
-        ax.set_title('baseline value: {} \n Avg 100 Episodes: {}'.format(np.round(base,2), np.round(avg_reward_list[-1],2)))
+        ax.hlines(base,xmin = 0, xmax = self.num_episodes, color = 'black', label = 'baseline true solution: {}'.format(np.round(base,)))
+        ax.set_title('baseline value: {} \n Avg Cost 100 Episodes: {}'.format(np.round(base,2), np.round(avg_reward_list[-1],2)))
 
         # for y axis poilcy
         policy_x_0 = np.zeros(n_x)
@@ -500,32 +500,34 @@ class CaseOne():
         ###########################################################
         episode_ax = self.dashboard_num * np.linspace(1,len(self.mean_abs_error_P_x_0), len(self.mean_abs_error_P_x_0))
         ax = fig.add_subplot(2, 4, 6)
-        ax.scatter(episode_ax,  self.mean_abs_error_v1, label = 'Mean Abs Error 1: {}'.format(np.round(np.mean(error_v_1),2)))
-        ax.scatter(episode_ax,  self.mean_abs_error_v2, label = 'Mean Abs Error 1: {}'.format(np.round(np.mean(error_v_2),2)))
-        ax.plot(episode_ax,  self.mean_abs_error_v1)
-        ax.plot(episode_ax,  self.mean_abs_error_v2)
+        #ax.scatter(episode_ax,  self.mean_abs_error_v1, label = 'MAE 1: {}'.format(np.round(np.mean(error_v_1),2)))
+        #ax.scatter(episode_ax,  self.mean_abs_error_v2, label = 'MAE 2: {}'.format(np.round(np.mean(error_v_2),2)))
+        ax.set_xlim([0,self.num_episodes])
+        ax.plot(episode_ax,  self.mean_abs_error_v1, label = 'MAE 1: {}'.format(np.round(np.mean(error_v_1),2)))
+        ax.plot(episode_ax,  self.mean_abs_error_v2, label = 'MAE 2: {}'.format(np.round(np.mean(error_v_2),2)))
 
-        ax.set_title('abs error value function t = {} '.format(t0))
+        ax.set_title('MAE value function t = {} '.format(t0))
         ax.legend()
-        ax.set_xlim([np.min(episode_ax)-1, np.max(episode_ax)+1])
+        
 
         ax = fig.add_subplot(2, 4, 7)
         
-        ax.scatter(episode_ax, self.mean_abs_error_P_x_0, label = 'Mean Abs Error x = 0: {}'.format(np.round(np.mean(error_P_x_0),2)))
-        ax.plot(episode_ax, self.mean_abs_error_P_x_0)
-
-        ax.set_title('abs error policy function x = 0 t = {} '.format(t0))
+        #ax.scatter(episode_ax, self.mean_abs_error_P_x_0, label = 'MAE policy approximation x = 0: {}'.format(np.round(np.mean(error_P_x_0),2)))
+        ax.plot(episode_ax, self.mean_abs_error_P_x_0, label = 'MAE: {}'.format(np.round(np.mean(error_P_x_0),2)))
+        ax.set_xlim([0,self.num_episodes])
+        ax.set_title('MAE policy function x = 0 t = {} '.format(t0))
         ax.legend()
-        ax.set_xlim([np.min(episode_ax)-1, np.max(episode_ax)+1])
+        
 
         ax = fig.add_subplot(2, 4, 8)
         
-        ax.scatter(episode_ax, self.mean_abs_error_P_y_0, label = 'Mean Abs Error y = 0: {}'.format(np.round(np.mean(error_P_y_0),2)))
-        ax.plot(episode_ax, self.mean_abs_error_P_y_0)
+        #ax.scatter(episode_ax, self.mean_abs_error_P_y_0, label = 'MAE policy approximation y = 0: {}'.format(np.round(np.mean(error_P_y_0),2)))
+        ax.plot(episode_ax, self.mean_abs_error_P_y_0, label = 'MAE: {}'.format(np.round(np.mean(error_P_y_0),2)))
 
         ax.set_title('abs error policy function y = 0 t = {} '.format(t0))
+        ax.set_xlim([0,self.num_episodes])
         ax.legend()
-        ax.set_xlim([np.min(episode_ax)-1, np.max(episode_ax)+1])
+ 
 
         #terminal value function
         for ix in range(n_x):
@@ -537,9 +539,9 @@ class CaseOne():
 
                 v1,v2 = self.AC.critic_1([tf.expand_dims(tf.convert_to_tensor(state),0),action]), self.AC.critic_2([tf.expand_dims(tf.convert_to_tensor(state),0),action])
                 
-                V1[ix] = v1
+                V1[ix][iy] = v1
                 
-                V2[ix] = v2
+                V2[ix][iy] = v2
         
         ax = fig.add_subplot(2, 4, 5, projection = '3d')
         ax.plot_surface(X,Y, V1, label = 'approx value function 1')
@@ -551,8 +553,8 @@ class CaseOne():
         fig.set_size_inches(w = 15, h= 7.5)
         fig.tight_layout()
         plt.subplots_adjust(wspace=0.15, hspace=0.3)
-        #fig.savefig('.\Bilder_Episoden\TD3_Dashboard_Episode_{}'.format(len(avg_reward_list)))
-        plt.show()
+        fig.savefig('.\Bilder_SOC\LQR_TD3_Episode_{}'.format(len(avg_reward_list)))
+        #plt.show()
     def plots(self,n_x,V_t,A_t):
         
         n_a = 20
@@ -611,7 +613,7 @@ class CaseOne():
 if __name__ == "__main__":
 
     lqr = CaseOne()
-    n_x = 30
+    n_x = 40
     
     V_t,A_t,base = LQR.Solution_2_D(lqr).create_solution(n_x)
     #V_t, A_t, base = LQR.Solution(lqr).dynamic_programming(n_x)

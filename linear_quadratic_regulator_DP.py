@@ -24,6 +24,7 @@ class Solution_2_D():
         self.P_t[-1] = self.D
         self.Q_t[-1] = 0
 
+        
         self.dt = self.T/self.N
 
         self.r = 0
@@ -51,10 +52,10 @@ class Solution_2_D():
 
                 inv = np.linalg.inv(np.eye(2) + P_old)
                 y = np.dot(P_old, inv)
-                P = P_old + np.eye(2) - np.dot(y, P_old)
+                P = P_old + np.identity(2) - np.dot(y, P_old)
 
                 Q_old = self.Q_t[n+1]
-                Q = Q_old + np.trace(self.sig * P_old)
+                Q = Q_old + np.trace((self.sig**2) * P_old)
                 self.Q_t[n] = Q
                 self.P_t[n] =  P
 
@@ -67,7 +68,7 @@ class Solution_2_D():
                    
                     V_t[i][j] =np.dot(x_bar,z) + Q
                    
-                    inv = np.linalg.inv(np.eye(2) + P_old)
+                    inv = np.linalg.inv(np.identity(2) + P_old)
                     
                     y_bar = np.dot(P_old,z)
                     
@@ -92,20 +93,24 @@ class Solution_2_D():
             for n in range(self.N):
                 x = X[n]
                 x = np.clip(x, a_min = self.x_lower, a_max = self.x_upper)
-                ind = self.state_to_dicrete(X[n])
+                
                 if (n== self.N-1):
                     y = np.dot(np.transpose(x), self.D)
                     c[n] = np.dot(y,x)
                 else:
-                    a = self.poli[n][ind]
+                    #a = self.poli[n][ind]
+                    inv = np.linalg.inv(np.identity(2) + P_old)
                     
+                    y_bar = np.dot(P_old,x)
+                    
+                    a = -np.dot(inv, y_bar)
                     y1= np.dot(np.transpose(x), self.f_A)
                     
                     y2 = np.dot(np.transpose(a), self.f_B)
                     
                     c[n] = np.dot(y1,x) + np.dot(y2,a)
                     
-                    X[n+1] = np.dot(self.A,X[n]) + np.dot(self.B,a) + self.sig*np.random.normal(2)
+                    X[n+1] = X[n] + a + self.sig*np.random.normal(2)
                 #X[n+1] = (1 + self.A * self.dt)* X[n] + self.B * self.dt* a + np.sqrt(self.sig * self.dt)*np.random.normal()
             cum_cost[i] = np.sum(c)
         

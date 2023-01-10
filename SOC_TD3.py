@@ -93,7 +93,7 @@ class ActorCritic():
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
       
         self.var = 2
-        self.var_decay = 0.999
+        self.var_decay = 0.9999
         self.lr_decay = 1
 
         self.update_frames = 2
@@ -258,16 +258,16 @@ class CaseOne():
         # dX_t = (A X_t + B u_t) dt + sig * dB_t
         self.A = np.identity(2)
         self.B = np.identity(2)
-        self.sig = 0
+        self.sig = 1
 
         # f(x,u) = f_A ||x||^2 + f_B ||u||^2
         self.f_A = np.identity(2)
         self.f_B = np.identity(2)
 
         # g(x) = D * ||x||^2
-        self.D = 0*np.identity(2)
+        self.D = 1*np.identity(2)
 
-        self.num_episodes = 12000
+        self.num_episodes = 7000
         self.state_dim = 2
         self.action_dim = 2
         self.AC = ActorCritic(self.state_dim, self.action_dim, False)
@@ -280,7 +280,11 @@ class CaseOne():
 
         self.r2 = 3
 
-        self.dashboard_num = 4000
+        self.dashboard_num = 100
+
+        self.change_V1 = []
+        self.change_V2 = []
+        
       
 
     def f(self, n,x,a):
@@ -410,8 +414,8 @@ class CaseOne():
         self.AC.save_model()
         self.dashboard(n_x,avg_reward_list,avg_stopping_list,self.AC.actor_loss)
     
-    def run_simulation(self, num_sim):
-        fig = plt.figure()
+    def run_simulation(self, num_sim,avg_reward_list):
+        fig = plt.figure(figsize= (6,6))
         for sim in range(num_sim):
             X = np.zeros((self.N,2), dtype= np.float32)
             x,y = np.zeros(self.N, dtype= np.float32), np.zeros(self.N, dtype= np.float32)
@@ -445,14 +449,20 @@ class CaseOne():
         circ_x_1 = self.r1*np.cos(time)
         circ_y_1 = self.r1*np.sin(time)
         plt.plot(circ_x_1, circ_y_1, color = 'black')
+        plt.title('simulation episode {}'.format(len(avg_reward_list)))
 
         circ_x_2 = self.r2*np.cos(time)
         circ_y_2 = self.r2*np.sin(time)
         plt.plot(circ_x_2, circ_y_2, color = 'black')
-        plt.show()
+        fig.savefig('.\Bilder_SOC\Sim_Balls_Episode_{}'.format(len(avg_reward_list)))
+        #plt.show()
             
     def dashboard(self,n_x,avg_reward_list, avg_stopping_list,actor_loss):
-        self.run_simulation(10)
+        if (len(self.change_V1) == 0):
+            self.old_V1 = np.zeros((n_x,n_x))
+            self.old_V2 = np.zeros((n_x,n_x))
+
+        self.run_simulation(10, avg_reward_list)
         x_space = np.linspace(-self.r2,self.r2, n_x)
         y_space = np.linspace(-self.r2,self.r2, n_x)
 
@@ -465,18 +475,17 @@ class CaseOne():
 
         ax = fig.add_subplot(2, 3, 1)
         ax.plot(avg_reward_list)
+        ax.set_xlim([0,self.num_episodes])
         ax.set_xlabel('Episode')
-        ax.set_ylabel('Avg. Epsiodic Reward')
+        ax.set_title('Avg. Epsiodic Reward')
 
         ax = fig.add_subplot(2, 3, 2)
         ax.plot(avg_stopping_list)
         ax.set_xlabel('Episode')
-        ax.set_ylabel('Avg. Stopping Time')
+        ax.set_xlim([0,self.num_episodes])
+        ax.set_title('Avg. Stopping Time')
 
-        ax = fig.add_subplot(2, 3, 3)
-        ax.plot(actor_loss)
-        ax.set_xlabel('Episode')
-        ax.set_ylabel('Actor Loss')
+        
         
 
         # for y axis poilcy
@@ -499,43 +508,54 @@ class CaseOne():
                 
                 V2[ix][iy] = v2
 
-               
                 if (ix == 0):
                     policy_x_0[iy] = action[0][1]
                     
-                    
                 if (iy == 0):
                     policy_y_0[ix] = action[0][0]
-                  
 
+        change_V1 = (self.old_V1 - V1)**2
+        change_V2 = (self.old_V2 - V2)**2
+
+        self.change_V1.append(np.mean(change_V1))
+        
+        self.change_V2.append(np.mean(change_V2))
+        self.old_V1 = V1
+        self.old_V2 = V2
        
+        ax = fig.add_subplot(2, 3, 3)
+        ep_axis = np.linspace(0,len(avg_reward_list), len(self.change_V1))
+        ax.plot(ep_axis,self.change_V1, label = 'change MSE 1: {}'.format(self.change_V1[-1]))
+        ax.plot(ep_axis,self.change_V2,  label = 'change MSE 2: {}'.format(self.change_V2[-1]))
+        ax.set_xlabel('Episode')
+        #ax.set_xlim([0,self.num_episodes])
+        ax.set_title('Change MSE value function')
+        ax.legend()
 
+        ax = fig.add_subplot(2, 3, 4)
+        ax.plot(x_space, policy_y_0, label = 'policy function approximation y = 0')
+        
+        ax.set_title('policy function y = 0 t = {}'.format(t0))
+        
+        ax = fig.add_subplot(2, 3, 5)
+        ax.plot(x_space, policy_x_0, label = 'policy function approximation x = 0')
+        
+        ax.set_title('policy function x = 0 t = {}'.format(t0))
         X,Y = np.meshgrid(x_space, y_space)
 
-        ax = fig.add_subplot(2, 3, 4, projection = '3d')
+        ax = fig.add_subplot(2, 3, 6, projection = '3d')
 
         ax.plot_surface(X,Y, V1, label = 'approx value function 1')
         ax.plot_surface(X,Y, V2, label = 'approx value function 2')
        
         
         ax.set_title('value function t = {}'.format(t0))
-
-        ax = fig.add_subplot(2, 3, 5)
-        ax.plot(x_space, policy_x_0, label = 'policy function approximation x = 0')
-        
-        ax.set_title('policy function x = 0 t = {}'.format(t0))
-
-        ax = fig.add_subplot(2, 3, 6)
-        ax.plot(x_space, policy_y_0, label = 'policy function approximation y = 0')
-        
-        ax.set_title('policy function y = 0 t = {}'.format(t0))
-
-        
+  
         fig.set_size_inches(w = 15, h= 7.5)
         fig.tight_layout()
         plt.subplots_adjust(wspace=0.15, hspace=0.3)
-        #fig.savefig('.\Bilder_Episoden\TD3_Dashboard_Episode_{}'.format(len(avg_reward_list)))
-        plt.show()
+        fig.savefig('.\Bilder_SOC\TD3_Balls_Episode_{}'.format(len(avg_reward_list)))
+        #plt.show()
     
 
 if __name__ == "__main__":
