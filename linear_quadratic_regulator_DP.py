@@ -38,7 +38,7 @@ class Solution_2_D():
         self.x_lower = -2
         x_space = np.linspace(-2,2, n_x)
         y_space = np.linspace(-2,2, n_x)
-
+        optimal_cost = 0
         for n in reversed(range(self.N)):
             V_t = np.zeros((n_x,n_x))
             A_t = np.zeros((n_x,n_x,2))
@@ -50,12 +50,13 @@ class Solution_2_D():
             else:
                 P_old = self.P_t[n+1]
 
-                inv = np.linalg.inv(np.eye(2) + P_old)
+                inv = np.linalg.inv(np.identity(2) + P_old)
                 y = np.dot(P_old, inv)
                 P = P_old + np.identity(2) - np.dot(y, P_old)
 
                 Q_old = self.Q_t[n+1]
-                Q = Q_old + np.trace((self.sig**2) * P_old)
+                optimal_cost += np.trace(np.dot((self.sig**2)*np.identity(2), P_old))
+                Q = Q_old + np.trace(np.dot((self.sig**2)*np.identity(2), P_old))
                 self.Q_t[n] = Q
                 self.P_t[n] =  P
 
@@ -64,9 +65,9 @@ class Solution_2_D():
                     x = x_space[i]
                     y = y_space[j]
                     z = np.array([x,y])
-                    x_bar = np.dot(np.transpose(z),P)
+                    x_bar = np.dot(np.transpose(z),self.P_t[n])
                    
-                    V_t[i][j] =np.dot(x_bar,z) + Q
+                    V_t[i][j] = np.dot(x_bar,z) + Q
                    
                     inv = np.linalg.inv(np.identity(2) + P_old)
                     
@@ -91,29 +92,31 @@ class Solution_2_D():
             
             c = np.zeros(self.N)
             for n in range(self.N):
-                x = X[n]
-                x = np.clip(x, a_min = self.x_lower, a_max = self.x_upper)
+                X[n] = np.clip(X[n], a_min= -2,a_max = 2)
+                
                 
                 if (n== self.N-1):
-                    y = np.dot(np.transpose(x), self.D)
-                    c[n] = np.dot(y,x)
+                    y = np.dot(np.transpose(X[n]), self.D)
+                    c[n] = np.dot(y,X[n])
                 else:
                     #a = self.poli[n][ind]
-                    inv = np.linalg.inv(np.identity(2) + P_old)
+                    inv = np.linalg.inv(np.identity(2) + self.P_t[n+1])
                     
-                    y_bar = np.dot(P_old,x)
+                    y_bar = np.dot(self.P_t[n+1],X[n])
                     
                     a = -np.dot(inv, y_bar)
-                    y1= np.dot(np.transpose(x), self.f_A)
+
+                    y1= np.dot(np.transpose(X[n]), self.f_A)
                     
                     y2 = np.dot(np.transpose(a), self.f_B)
                     
-                    c[n] = np.dot(y1,x) + np.dot(y2,a)
+                    c[n] = np.dot(y1,X[n]) + np.dot(y2,a)
                     
                     X[n+1] = X[n] + a + self.sig*np.random.normal(2)
                 #X[n+1] = (1 + self.A * self.dt)* X[n] + self.B * self.dt* a + np.sqrt(self.sig * self.dt)*np.random.normal()
             cum_cost[i] = np.sum(c)
         
+        print('optimal_cost', optimal_cost)
         print(np.mean(cum_cost))
         return self.V, self.poli, np.mean(cum_cost)
 

@@ -67,7 +67,7 @@ class ActorCritic():
 
     def __init__(self, state_dim, action_dim, load_model):
 
-        self.batch_size = 128
+        self.batch_size = 1024
         self.max_memory_size = 100000
 
         self.state_dim = state_dim
@@ -116,7 +116,7 @@ class ActorCritic():
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
       
         self.var = 1
-        self.var_decay = 0.9999
+        self.var_decay = 0.999
         self.lr_decay = 1
 
         self.update_frames = 2
@@ -290,7 +290,7 @@ class CaseOne():
         # g(x) = D * ||x||^2
         self.D = np.identity(2)
 
-        self.num_episodes = 5000
+        self.num_episodes = 10000
         self.state_dim = 2
         self.action_dim = 2
         self.AC = ActorCritic(self.state_dim, self.action_dim, False)
@@ -407,7 +407,7 @@ class CaseOne():
                 
                 ep_reward_list.append(episodic_reward)
                 # Mean of last 40 episodes
-                avg_reward = np.mean(ep_reward_list[-100:])
+                avg_reward = np.mean(ep_reward_list[-500:])
                 print("Episode * {} * Avg Reward is ==> {}, var ==> {}, actor_lr ==> {}".format(ep, avg_reward, self.AC.var, self.AC.actor_lr))
                 avg_reward_list.append(avg_reward)
         # Plotting graph
@@ -432,8 +432,8 @@ class CaseOne():
         ax.set_xlabel('Episode')
         ax.set_xlim([0,self.num_episodes])
         ax.set_ylabel('Avg. Epsiodic Reward')
-        ax.hlines(base,xmin = 0, xmax = self.num_episodes, color = 'black', label = 'baseline true solution: {}'.format(np.round(base,)))
-        ax.set_title('baseline value: {} \n Avg Cost 100 Episodes: {}'.format(np.round(base,2), np.round(avg_reward_list[-1],2)))
+        #ax.hlines(base,xmin = 0, xmax = self.num_episodes, color = 'black', label = 'baseline true solution: {}'.format(np.round(base,)))
+        ax.set_title('Avg Cost 500 Episodes: {}'.format(np.round(avg_reward_list[-1],2)))
 
         # for y axis poilcy
         policy_x_0 = np.zeros(n_x)

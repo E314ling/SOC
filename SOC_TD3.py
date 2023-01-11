@@ -44,7 +44,7 @@ class ActorCritic():
 
     def __init__(self, state_dim, action_dim, load_model):
 
-        self.batch_size = 128
+        self.batch_size = 1024
         self.max_memory_size = 10000
 
         self.state_dim = state_dim
@@ -93,7 +93,7 @@ class ActorCritic():
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
       
         self.var = 2
-        self.var_decay = 0.9999
+        self.var_decay = 0.999
         self.lr_decay = 1
 
         self.update_frames = 2
@@ -267,7 +267,7 @@ class CaseOne():
         # g(x) = D * ||x||^2
         self.D = 1*np.identity(2)
 
-        self.num_episodes = 7000
+        self.num_episodes = 10000
         self.state_dim = 2
         self.action_dim = 2
         self.AC = ActorCritic(self.state_dim, self.action_dim, False)
@@ -393,7 +393,7 @@ class CaseOne():
 
                 if(done):
                     stopping_time_list.append(n)
-                    avg_stopping_time = np.mean(stopping_time_list[-100:])
+                    avg_stopping_time = np.mean(stopping_time_list[-500:])
                     avg_stopping_list.append(avg_stopping_time)
                     break
                 else:
@@ -406,7 +406,7 @@ class CaseOne():
                 
                 ep_reward_list.append(episodic_reward)
                 # Mean of last 40 episodes
-                avg_reward = np.mean(ep_reward_list[-100:])
+                avg_reward = np.mean(ep_reward_list[-500:])
                 print("Episode * {} * Avg Reward is ==> {} * Avg Stopping Time is ==> {}, var ==> {}, actor_lr ==> {}".format(ep, avg_reward,avg_stopping_time, self.AC.var, self.AC.actor_lr))
                 avg_reward_list.append(avg_reward)
         # Plotting graph
