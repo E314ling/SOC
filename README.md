@@ -13,7 +13,7 @@ with $t_n = n \cdot  \Delta t$. This  equation has a closed-form solution which 
 We aim to minimize
 
 $$
-J(x) = \mathbb{E} \bigg( \sum_{i=0}^{N-1} (X_i^T Q X_i + u_i^T R u_i ) + X_N^T D X_N \big | X_0 = x \bigg)
+J(x) = \mathbb{E} \bigg( \sum_{i=0}^{N-1} \Delta t (X_i^T Q X_i + u_i^T R u_i ) + X_N^T D X_N \big | X_0 = x \bigg)
 $$
 ## Szenario two:
 
