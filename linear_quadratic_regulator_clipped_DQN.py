@@ -77,7 +77,7 @@ class ActorCritic():
         self.action_dim = action_dim
 
         self.gamma = 1
-        self.tau = 0.01
+        self.tau = 0.001
         self.lower_action_bound = -2
         self.upper_action_bound = 2
 
@@ -214,9 +214,10 @@ class CaseOne():
        # dX_t = (A X_t + B u_t) dt + sig * dB_t
         self.A = 1
         self.B = 1
-        self.sig = 1
+        self.sig = np.sqrt(2)
 
         # f(x,u) = f_A ||x||^2 + f_B ||u||^2
+        self.discrete_problem = False
         self.f_A = 1
         self.f_B = 1
 
@@ -242,7 +243,10 @@ class CaseOne():
     
     def f(self, n,x,a):
         
-        return np.float32(self.f_B *np.linalg.norm(a)**2 + self.f_A*np.linalg.norm(x)**2)
+        if(self.discrete_problem):
+            return np.float32(self.f_B *np.linalg.norm(a)**2 + self.f_A*np.linalg.norm(x)**2)
+        else:
+            return self.dt*(np.float32(self.f_B *np.linalg.norm(a)**2 + self.f_A*np.linalg.norm(x)**2))
         
 
     def g(self, n,x):
@@ -301,7 +305,11 @@ class CaseOne():
                     
                     reward = self.f(n,X[n], action)
 
-                    X[n+1] = (X[n] + action) + self.sig * np.random.normal()
+                    if (self.discrete_problem):
+                    
+                        X[n+1] =  (X[n] + action) + self.sig*np.random.normal()
+                    else:
+                        X[n+1] =  X[n] + (X[n] + action)*self.dt + self.sig*np.sqrt(self.dt)  * np.random.normal()
                     
                     new_state = np.array([n+1,X[n+1]], np.float32)
                     new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)

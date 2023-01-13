@@ -283,6 +283,7 @@ class CaseOne():
         self.B = np.identity(2)
         self.sig = 0.1
 
+        self.discrete_problem = False
         # f(x,u) = f_A ||x||^2 + f_B ||u||^2
         self.f_A = np.identity(2)
         self.f_B = np.identity(2)
@@ -312,7 +313,10 @@ class CaseOne():
         
         y2 = np.dot(np.transpose(a), self.f_B)
       
-        return np.float32(np.dot(y1,x) + np.dot(y2,a))
+        if(self.discrete_problem):
+            return np.float32(np.dot(y1,x) + np.dot(y2,a))
+        else:
+            return self.dt*(np.float32(np.dot(y1,x) + np.dot(y2,a)))
         
     def g(self, n,x):
         y = np.dot(np.transpose(x), self.D)
@@ -374,10 +378,11 @@ class CaseOne():
                     action = self.AC.policy(state)[0]
 
                     reward = self.f(n,X[n], action)
-                    #X[n+1] =  X[n] + (X[n] + action)*self.dt + np.sqrt(self.sig*self.dt)  * np.random.normal()
+                    if (self.discrete_problem):
                     
-                    X[n+1] =  (X[n] + action) + self.sig*np.random.normal(2)
-                    #X[n+1] = np.clip(X[n+1], a_min= -2,a_max = 2)
+                        X[n+1] =  (X[n] + action) + self.sig*np.random.normal(2)
+                    else:
+                        X[n+1] =  X[n] + (X[n] + action)*self.dt + self.sig*np.sqrt(self.dt)  * np.random.normal(2)
                     new_state = np.array([n+1,X[n+1][0],X[n+1][1]], np.float32)
                     new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
                 

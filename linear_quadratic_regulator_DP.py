@@ -238,7 +238,7 @@ class Solution():
                 P_old = self.P_t[n+1]
                 P = P_old + 1 - (P_old**2 / (P_old +1))
                 Q_old = self.Q_t[n+1]
-                Q = Q_old + self.sig * P_old
+                Q = Q_old + (self.sig) * P_old
                 self.Q_t[n] = Q
                 self.P_t[n] =  P
            

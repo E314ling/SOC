@@ -44,16 +44,17 @@ class ActorCritic():
 
     def __init__(self, state_dim, action_dim, load_model):
 
-        self.batch_size = 1024
-        self.max_memory_size = 10000
+        self.batch_size = 512
+        self.max_memory_size = 100000
 
         self.state_dim = state_dim
         self.action_dim = action_dim
 
         self.gamma = 1
         self.tau = 0.001
-        self.lower_action_bound = -1
-        self.upper_action_bound = 1
+        self.tau_actor = 0.001
+        self.lower_action_bound = -5
+        self.upper_action_bound = 5
 
         self.buffer = experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
 
@@ -93,6 +94,8 @@ class ActorCritic():
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
       
         self.var = 2
+        self.var_target = 0.1
+        self.var_min = 0.2
         self.var_decay = 0.999
         self.lr_decay = 1
 
@@ -113,7 +116,7 @@ class ActorCritic():
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
 
     def update_var(self):
-        self.var = np.max([0.1,self.var * self.var_decay])
+        self.var = np.max([self.var_min,self.var * self.var_decay])
     
     @tf.function
     def update_critic(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch):
@@ -186,10 +189,13 @@ class ActorCritic():
            
 
     @tf.function
-    def update_target(self, target_weights, weights):
+    def update_target_critic(self, target_weights, weights):
         for (a,b) in zip(target_weights, weights):
             a.assign(self.tau *b + (1-self.tau) *a)
-
+    @tf.function
+    def update_target_actor(self, target_weights, weights):
+        for (a,b) in zip(target_weights, weights):
+            a.assign(self.tau_actor *b + (1-self.tau_actor) *a)
         
     def get_critic_NN(self):
         # input [state, action]
@@ -200,10 +206,10 @@ class ActorCritic():
 
         input = tf.concat([state_input, action_input],1)
        
-        out_1 = layers.Dense(100, activation = 'relu')(input)
+        out_1 = layers.Dense(128, activation = 'relu')(input)
         out_1 = layers.BatchNormalization()(out_1)
-        out_1 = layers.Dense(50, activation = 'relu')(out_1)
-        out_1 = layers.Dense(25, activation = 'relu')(out_1)
+        out_1 = layers.Dense(128, activation = 'relu')(out_1)
+        
         out_1 = layers.Dense(1, kernel_initializer= last_init)(out_1)
 
         model = keras.Model(inputs = [state_input, action_input], outputs = out_1)
@@ -217,10 +223,10 @@ class ActorCritic():
 
         inputs = layers.Input(shape=(self.state_dim,))
        
-        out = layers.Dense(100, activation="relu")(inputs)
+        out = layers.Dense(128, activation="relu")(inputs)
         out = layers.BatchNormalization()(out)
-        out = layers.Dense(50, activation="relu")(out)
-        out = layers.Dense(25, activation="relu")(out)
+        out = layers.Dense(128, activation="relu")(out)
+       
         outputs = layers.Dense(self.action_dim, activation='tanh', kernel_initializer=last_init)(out)
 
         # Our upper bound is 2.0 .
@@ -258,9 +264,10 @@ class CaseOne():
         # dX_t = (A X_t + B u_t) dt + sig * dB_t
         self.A = np.identity(2)
         self.B = np.identity(2)
-        self.sig = 1
+        self.sig = np.sqrt(2)
 
         # f(x,u) = f_A ||x||^2 + f_B ||u||^2
+        self.discrete_problem = False
         self.f_A = np.identity(2)
         self.f_B = np.identity(2)
 
@@ -273,7 +280,7 @@ class CaseOne():
         self.AC = ActorCritic(self.state_dim, self.action_dim, False)
 
         self.T = 1
-        self.N = 40
+        self.N = 20
         self.dt = self.T / self.N
 
         self.r1 = 1
@@ -292,9 +299,12 @@ class CaseOne():
         y1= np.dot(np.transpose(x), self.f_A)
         
         y2 = np.dot(np.transpose(a), self.f_B)
-      
-        return np.float32(np.dot(y1,x) + np.dot(y2,a))
-        
+
+        if (self.discrete_problem):
+            return np.float32(np.dot(y1,x) + np.dot(y2,a))
+        else:
+            return self.dt*(np.float32(np.dot(y1,x) + np.dot(y2,a)))
+
     def g(self, n,x):
         y = np.dot(np.transpose(x), self.D)
         return np.dot(y,x)
@@ -365,10 +375,11 @@ class CaseOne():
                     reward = self.f(n,X[n], action)
                     #print('X[n], action,reward ', X[n], action,reward )
                     
-                    X[n+1] =  X[n] + (X[n] + action)*self.dt + np.sqrt(self.sig*self.dt)  * np.random.normal(size = 2)
+                    if (self.discrete_problem):
                     
-                    #X[n+1] =  (X[n] + action) + self.sig*np.random.normal(2)
-                  
+                        X[n+1] =  (X[n] + action) + self.sig*np.random.normal(2)
+                    else:
+                        X[n+1] =  X[n] + (X[n] + action)*self.dt + self.sig*np.sqrt(self.dt)  * np.random.normal(size = 2)
                     new_state = np.array([X[n+1][0],X[n+1][1]], np.float32)
                    
                     new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
@@ -381,12 +392,12 @@ class CaseOne():
                 if (ep >= 100):
                     self.AC.learn(n)
                     
-                    self.AC.update_target(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
-                    self.AC.update_target(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
+                    self.AC.update_target_critic(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
+                    self.AC.update_target_critic(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
                  
                     if (n % self.AC.update_frames == 0 and n != 0):
-                     
-                        self.AC.update_target(self.AC.target_actor.variables, self.AC.actor.variables)
+                        
+                        self.AC.update_target_actor(self.AC.target_actor.variables, self.AC.actor.variables)
                         self.AC.update_lr()
                         self.AC.update_var()
                 frame_num += 1
@@ -398,7 +409,8 @@ class CaseOne():
                     break
                 else:
                     n += 1
-
+            if (ep == 0):
+                self.dashboard(n_x,avg_reward_list,avg_stopping_list,self.AC.actor_loss)
             if (ep % self.dashboard_num == 0 and ep >100):
                 self.dashboard(n_x,avg_reward_list,avg_stopping_list,self.AC.actor_loss)
             
@@ -434,9 +446,12 @@ class CaseOne():
                     print('done')      
                 else:
 
-                    X[n+1] =  X[n] + (X[n] + action)*self.dt + np.sqrt(self.sig*self.dt)  * np.random.normal(size = 2)
-                    #X[n+1] =  (X[n] + action) + self.sig*np.random.normal(2)
-                    print('X[n], action,X[n] + action, X[n+1]', X[n], action,X[n] + action, X[n+1])
+                    if (self.discrete_problem):
+                    
+                        X[n+1] =  (X[n] + action) + self.sig*np.random.normal(2)
+                    else:
+                        X[n+1] =  X[n] + (X[n] + action)*self.dt + np.sqrt(self.sig*self.dt)  * np.random.normal(size = 2)
+                    
                 if(done):
                     x[n:] = x[n]
                     y[n:] = y[n]
@@ -445,7 +460,7 @@ class CaseOne():
                     n += 1
                
             plt.plot(x, y)
-        time = np.linspace(0,2*np.pi,self.N)
+        time = np.linspace(0,2*np.pi,100)
         circ_x_1 = self.r1*np.cos(time)
         circ_y_1 = self.r1*np.sin(time)
         plt.plot(circ_x_1, circ_y_1, color = 'black')
@@ -464,6 +479,9 @@ class CaseOne():
 
         self.run_simulation(10, avg_reward_list)
         x_space = np.linspace(-self.r2,self.r2, n_x)
+        one_ind = int(np.where(x_space == 1)[0][0])
+        
+        minus_one_ind = int(np.where(x_space == -1)[0][0]) +1 
         y_space = np.linspace(-self.r2,self.r2, n_x)
 
         fig = plt.figure()
@@ -474,17 +492,24 @@ class CaseOne():
         t0 = 1
 
         ax = fig.add_subplot(2, 3, 1)
-        ax.plot(avg_reward_list)
+        if (len(avg_reward_list)> 0):
+            ax.plot(avg_reward_list, label = 'Avg Reward: {}'.format(avg_reward_list[-1]))
+        else:
+            ax.plot(avg_reward_list)
         ax.set_xlim([0,self.num_episodes])
         ax.set_xlabel('Episode')
         ax.set_title('Avg. Epsiodic Reward')
+        ax.legend()
 
         ax = fig.add_subplot(2, 3, 2)
-        ax.plot(avg_stopping_list)
+        if (len(avg_stopping_list) > 0):
+            ax.plot(avg_stopping_list, label = 'Avg stopping time: {}'.format(avg_stopping_list[-1]))
+        else:
+            ax.plot(avg_stopping_list)
         ax.set_xlabel('Episode')
         ax.set_xlim([0,self.num_episodes])
         ax.set_title('Avg. Stopping Time')
-
+        ax.legend()
         
         
 

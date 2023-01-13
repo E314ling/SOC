@@ -67,16 +67,16 @@ class ActorCritic():
 
     def __init__(self, state_dim, action_dim, load_model):
 
-        self.batch_size = 256
+        self.batch_size = 512
         self.max_memory_size = 1000000
 
         self.state_dim = state_dim
         self.action_dim = action_dim
 
         self.gamma = 1
-        self.tau = 0.005
-        self.lower_action_bound = -4
-        self.upper_action_bound = 4
+        self.tau = 0.001
+        self.lower_action_bound = -2
+        self.upper_action_bound = 2
 
         self.buffer = experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
 
@@ -101,15 +101,15 @@ class ActorCritic():
             self.target_actor.set_weights(self.actor.get_weights())
 
 
-        self.critic_lr = 0.00001
+        self.critic_lr = 0.0001
         self.critic_optimizer = tf.keras.optimizers.Adam(self.critic_lr)
        
-        self.actor_lr = 0.00001
+        self.actor_lr = 0.0001
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
       
-        self.var = 0.3
+        self.var = 0.2
         self.var_decay = 1
-        self.lr_decay = 0.9999
+        self.lr_decay = 1
 
        
     def save_model(self):
@@ -174,7 +174,9 @@ class ActorCritic():
         record_range = min(self.buffer.buffer_counter, self.buffer.buffer_capacity)
 
         batch_indices = np.random.choice(record_range, self.batch_size)
-
+        
+        batch_indices = np.append(batch_indices, record_range)
+        
         state_batch = tf.convert_to_tensor(self.buffer.state_buffer[batch_indices])
         action_batch = tf.convert_to_tensor(self.buffer.action_buffer[batch_indices])
         reward_batch = tf.convert_to_tensor(self.buffer.reward_buffer[batch_indices])
@@ -203,14 +205,14 @@ class ActorCritic():
 
         input = tf.concat([state_input, action_input],1)
        
-        out_1 = layers.Dense(512, activation = 'relu')(input)
+        out_1 = layers.Dense(128, activation = 'relu')(input)
         out_1 = layers.BatchNormalization()(out_1)
-        out_1 = layers.Dense(256, activation = 'relu')(out_1)
+        out_1 = layers.Dense(128, activation = 'relu')(out_1)
         out_1 = layers.Dense(1, kernel_initializer= last_init)(out_1)
 
-        out_2 = layers.Dense(512, activation = 'relu')(input)
+        out_2 = layers.Dense(128, activation = 'relu')(input)
         out_2 = layers.BatchNormalization()(out_1)
-        out_2 = layers.Dense(256, activation = 'relu')(out_2)
+        out_2 = layers.Dense(128, activation = 'relu')(out_2)
         out_2 = layers.Dense(1, kernel_initializer= last_init)(out_2)
 
 
@@ -226,9 +228,9 @@ class ActorCritic():
 
         inputs = layers.Input(shape=(self.state_dim+1,))
        
-        out = layers.Dense(512, activation="relu")(inputs)
+        out = layers.Dense(128, activation="relu")(inputs)
         out = layers.BatchNormalization()(out)
-        out = layers.Dense(512, activation="relu")(out)
+        out = layers.Dense(128, activation="relu")(out)
         outputs = layers.Dense(1, activation='tanh', kernel_initializer=last_init)(out)
 
         # Our upper bound is 2.0 .
@@ -267,7 +269,7 @@ class CaseOne():
         # dX_t = (A X_t + B u_t) dt + sig * dB_t
         self.A = 1
         self.B = 1
-        self.sig = 1
+        self.sig = 0.1
 
         # f(x,u) = f_A ||x||^2 + f_B ||u||^2
         self.f_A = 1
@@ -276,9 +278,10 @@ class CaseOne():
         # g(x) = D * ||x||^2
         self.D = 1
 
-        self.num_episodes = 1200
+        self.num_episodes = 5100
         self.state_dim = 1
         self.action_dim = 1
+        
         self.AC = ActorCritic(self.state_dim, self.action_dim, True)
 
         self.T = 1
@@ -286,7 +289,7 @@ class CaseOne():
         self.dt = self.T/self.N
 
         self.r = 0
-        self.dashboard_num = 50
+        self.dashboard_num = 100
         self.mean_abs_error_v1 = []
         self.mean_abs_error_v2 = []
         self.mean_abs_error_P = []
@@ -324,7 +327,7 @@ class CaseOne():
         # To store average reward history of last few episodes
         avg_reward_list = []
         X = np.zeros((self.N), dtype= np.float32)
-        X[0] = 2.5*np.random.rand() - 2.5
+        X[0] = 2*np.random.rand() - 2
         for ep in range(self.num_episodes):
             
             n=0
@@ -338,7 +341,7 @@ class CaseOne():
                     reward = self.g(n,X[n])
                     action = self.AC.policy(state)
                     X = np.zeros((self.N), dtype= np.float32)
-                    X[0] = 2.5*np.random.rand() - 2.5
+                    X[0] = 2*np.random.rand() - 2
                     new_state = np.array([0,X[0]], np.float32)
                     new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
                          
@@ -357,7 +360,7 @@ class CaseOne():
                  
                 episodic_reward += reward
                 # warm up
-                if (ep >= 200):
+                if (ep >= 100):
                     self.AC.learn(n)
                     
                     if (n % 2 == 0 and n != 0):
@@ -371,10 +374,10 @@ class CaseOne():
                 else:
                     n += 1
 
-            if (ep % self.dashboard_num == 0 and ep > 200):
+            if (ep % self.dashboard_num == 0 and ep > 100):
                 self.dashboard(n_x,V_t,A_t,avg_reward_list)
             
-            if (ep >= 200):
+            if (ep >= 100):
                 self.AC.var = 0.1
                 ep_reward_list.append(episodic_reward)
                 # Mean of last 40 episodes
@@ -400,7 +403,8 @@ class CaseOne():
         ax[0][0].plot(avg_reward_list)
         ax[0][0].set_xlabel('Episode')
         ax[0][0].set_ylabel('Avg. Epsiodic Reward')
-        ax[0][0].hlines(base,xmin = 0, xmax = len(avg_reward_list), color = 'black', label = 'baseline: {}'.format(np.round(base,)))
+        ax[0][0].set_xlim([0,self.num_episodes])
+        ax[0][0].hlines(base,xmin = 0, xmax = self.num_episodes, color = 'black', label = 'baseline: {}'.format(np.round(base,)))
         ax[0][0].set_title('baseline value: {} \n Avg 100 Episodes: {}'.format(np.round(base,2), np.round(avg_reward_list[-1],2)))
 
         for ix in range(n_x):
@@ -415,10 +419,10 @@ class CaseOne():
           
            V2[ix] = v2
 
-        error_v_1 = np.abs(V_t[t0] - V1)
-        error_v_2 = np.abs(V_t[t0] - V2)
-        self.mean_abs_error_v1.append(np.mean(np.abs(V_t[t0] - V1)))
-        self.mean_abs_error_v2.append(np.mean(np.abs(V_t[t0] - V2)))
+        error_v_1 = (V_t[t0] - V1)**2
+        error_v_2 = (V_t[t0] - V2)**2
+        self.mean_abs_error_v1.append(np.mean((V_t[t0] - V1)**2))
+        self.mean_abs_error_v2.append(np.mean((V_t[t0] - V2)**2))
 
         error_P = np.abs(A_t[t0] - P)
         self.mean_abs_error_P.append(np.mean(np.abs(A_t[t0] - P)))
@@ -437,21 +441,21 @@ class CaseOne():
         ###########################################################
         episode_ax = self.dashboard_num * np.linspace(1,len(self.mean_abs_error_P), len(self.mean_abs_error_P))
 
-        ax[1][1].scatter(episode_ax,  self.mean_abs_error_v1, label = 'Mean Abs Error 1: {}'.format(np.round(np.mean(error_v_1),2)))
-        ax[1][1].scatter(episode_ax,  self.mean_abs_error_v2, label = 'Mean Abs Error 1: {}'.format(np.round(np.mean(error_v_2),2)))
-        ax[1][1].plot(episode_ax,  self.mean_abs_error_v1)
-        ax[1][1].plot(episode_ax,  self.mean_abs_error_v2)
+        #ax[1][1].scatter(episode_ax,  self.mean_abs_error_v1, label = 'MSE 1: {}'.format(np.round(np.mean(error_v_1),2)))
+        #ax[1][1].scatter(episode_ax,  self.mean_abs_error_v2, label = 'MSE 2: {}'.format(np.round(np.mean(error_v_2),2)))
+        ax[1][1].plot(episode_ax,  self.mean_abs_error_v1, label = 'MSE 1: {}'.format(np.round(np.mean(error_v_1),2)))
+        ax[1][1].plot(episode_ax,  self.mean_abs_error_v2, label = 'MSE 2: {}'.format(np.round(np.mean(error_v_2),2)))
 
-        ax[1][1].set_title('abs error value function t = {} '.format(t0))
+        ax[1][1].set_title('MSE value function t = {} '.format(t0))
         ax[1][1].legend()
-        ax[1][1].set_xlim([np.min(episode_ax)-1, np.max(episode_ax)+1])
+        ax[1][1].set_xlim([0,self.num_episodes])
 
-        ax[1][2].scatter(episode_ax, self.mean_abs_error_P, label = 'Mean Abs Error: {}'.format(np.round(np.mean(error_P),2)))
-        ax[1][2].plot(episode_ax, self.mean_abs_error_P)
+        #ax[1][2].scatter(episode_ax, self.mean_abs_error_P, label = 'MSE: {}'.format(np.round(np.mean(error_P),2)))
+        ax[1][2].plot(episode_ax, self.mean_abs_error_P, label = 'MSE: {}'.format(np.round(np.mean(error_P),2)))
 
-        ax[1][2].set_title('abs error policy function t = {} '.format(t0))
+        ax[1][2].set_title('MSE policy function t = {} '.format(t0))
         ax[1][2].legend()
-        ax[1][2].set_xlim([np.min(episode_ax)-1, np.max(episode_ax)+1])
+        ax[1][2].set_xlim([0,self.num_episodes])
         # terminal value function
         for ix in range(n_x):
            state = np.array([self.N-1,state_space[ix]])

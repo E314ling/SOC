@@ -255,6 +255,7 @@ class CaseOne():
         self.B = 1
         self.sig = 1
 
+        self.discrete_problem = False
         # f(x,u) = f_A ||x||^2 + f_B ||u||^2
         self.f_A = 1
         self.f_B = 1
@@ -278,7 +279,10 @@ class CaseOne():
         
         self.mean_abs_error_P = []
     def f(self, n,x,a):
-        return np.float32(self.B *np.linalg.norm(a)**2 + self.A*np.linalg.norm(x)**2)
+        if(self.discrete_problem):
+            return np.float32(self.f_B *np.linalg.norm(a)**2 + self.f_A*np.linalg.norm(x)**2)
+        else:
+            return self.dt*(np.float32(self.f_B *np.linalg.norm(a)**2 + self.f_A*np.linalg.norm(x)**2))
         
 
     def g(self, n,x):
@@ -332,7 +336,12 @@ class CaseOne():
                     action = self.AC.policy(state)
                     reward = self.f(n,X[n], action)
 
-                    X[n+1] =  (self.A * X[n] + self.B * action) + self.sig * np.random.normal()
+                    if (self.discrete_problem):
+                    
+                        X[n+1] =  (X[n] + action) + self.sig*np.random.normal()
+                    else:
+                        X[n+1] =  X[n] + (X[n] + action)*self.dt + self.sig*np.sqrt(self.dt)  * np.random.normal()
+                    
 
                     new_state = np.array([n+1,X[n+1]], np.float32)
                     new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
