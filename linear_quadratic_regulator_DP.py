@@ -7,13 +7,11 @@ class Solution_2_D():
     def __init__(self,case_obj):
         
        # dX_t = (A X_t + B u_t) dt + sig * dB_t
-        self.A = case_obj.A
-        self.B = case_obj.B
+        
         self.sig = case_obj.sig
 
         # f(x,u) = f_A ||x||^2 + f_B ||u||^2
-        self.f_A = case_obj.f_A
-        self.f_B = case_obj.f_B
+        
 
         # g(x) = D * ||x||^2
         self.D = case_obj.D
@@ -24,8 +22,19 @@ class Solution_2_D():
         self.P_t[-1] = self.D
         self.Q_t[-1] = 0
 
-        
         self.dt = self.T/self.N
+        if (case_obj.discrete_problem):
+            self.A = case_obj.A
+            self.B = case_obj.B
+            self.f_A = case_obj.f_A
+            self.f_B = case_obj.f_B
+        else:
+            self.A = np.identity(2) + self.dt*case_obj.A
+            self.B = self.dt * case_obj.B
+            self.f_A = self.dt*case_obj.f_A
+            self.f_B = self.dt*case_obj.f_B
+        
+       
 
         self.r = 0
         self.V = {}
@@ -47,19 +56,33 @@ class Solution_2_D():
                     P = self.P_t[n]
                     Q = self.Q_t[n]
                     P_old = P
+                    AP = np.dot(self.A,P_old)
+                    BP = np.dot(self.B,P_old)
+                    APA = np.dot(AP,self.A)
+                    BPB = np.dot(BP,self.B)
+                    APB = np.dot(AP,self.B)
+                    BPA = np.dot(BP, self.A)
+                    inv = np.linalg.inv(BPB + self.f_B)
             else:
                 P_old = self.P_t[n+1]
 
-                inv = np.linalg.inv(np.identity(2) + P_old)
-                y = np.dot(P_old, inv)
-                P = P_old + np.identity(2) - np.dot(y, P_old)
+             
+                AP = np.dot(self.A,P_old)
+                BP = np.dot(self.B,P_old)
+                APA = np.dot(AP,self.A)
+                BPB = np.dot(BP,self.B)
+                APB = np.dot(AP,self.B)
+                BPA = np.dot(BP, self.A)
+                inv = np.linalg.inv(BPB + self.f_B)
+                I1 = np.dot(APB, inv)
+                P = APA  - np.dot(I1, BPA) + self.f_A
 
                 Q_old = self.Q_t[n+1]
-                optimal_cost += np.trace(np.dot((self.sig**2)*np.identity(2), P_old))
+            
                 Q = Q_old + np.trace(np.dot((self.sig**2)*np.identity(2), P_old))
                 self.Q_t[n] = Q
                 self.P_t[n] =  P
-
+            
             for i in range(n_x):
                 for j in range(n_x):
                     x = x_space[i]
@@ -69,11 +92,9 @@ class Solution_2_D():
                    
                     V_t[i][j] = np.dot(x_bar,z) + Q
                    
-                    inv = np.linalg.inv(np.identity(2) + P_old)
+                    Kt = -np.dot(inv,BPA)
                     
-                    y_bar = np.dot(P_old,z)
-                    
-                    A_t[i][j] = -np.dot(inv, y_bar)
+                    A_t[i][j] = np.dot(Kt, z)
                 
             self.V[n] = V_t
             self.poli[n] = A_t
