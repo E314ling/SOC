@@ -44,7 +44,7 @@ class ActorCritic():
 
     def __init__(self, state_dim, action_dim, load_model):
 
-        self.batch_size = 512
+        self.batch_size = 1024
         self.max_memory_size = 1000000
 
         self.state_dim = state_dim
@@ -256,7 +256,7 @@ class ActorCritic():
         
         #noice = self.noice_Obj()
         noice = tf.random.normal(shape = sampled_actions.get_shape(), mean = 0.0, stddev = 0.2, dtype = tf.float32)
-        noice = tf.clip_by_value(noice, -0.5, 0.5)
+        noice = tf.clip_by_value(noice, -0.5*self.upper_action_bound, 0.5*self.upper_action_bound)
         sampled_actions = sampled_actions + noice
         
         legal_action = tf.clip_by_value(sampled_actions, clip_value_min = self.lower_action_bound, clip_value_max =self.upper_action_bound)
@@ -267,17 +267,17 @@ class CaseOne():
 
     def __init__(self):
         # dX_t = (A X_t + B u_t) dt + sig * dB_t
-        self.A = np.identity(2)
+        self.A = 0*np.identity(2)
         self.B = np.identity(2)
-        self.sig = np.sqrt(2)
+        self.sig = np.sqrt(1)
 
         # f(x,u) = f_A ||x||^2 + f_B ||u||^2
         self.discrete_problem = False
-        self.f_A = np.identity(2)
+        self.f_A = 0*np.identity(2)
         self.f_B = np.identity(2)
 
         # g(x) = D * ||x||^2
-        self.D = 1*np.identity(2)
+        self.D = 0*np.identity(2)
 
         self.num_episodes = 5100
         self.state_dim = 2
@@ -364,7 +364,7 @@ class CaseOne():
                 done = self.check_if_done(n,state)
                 state = tf.expand_dims(tf.convert_to_tensor(state),0)
                 
-                action = self.AC.policy(state)[0]
+                action = self.AC.policy(state).numpy()[0]
                 
                 if (done):
                     reward = self.g(n,X[n])
@@ -384,7 +384,7 @@ class CaseOne():
                     
                         X[n+1] =  (X[n] + action) + self.sig*np.random.normal(2)
                     else:
-                        X[n+1] =  X[n] + (X[n] + action)*self.dt + self.sig*np.sqrt(self.dt)  * np.random.normal(size = 2)
+                        X[n+1] =  X[n] + (np.dot(self.A,X[n]) + np.dot(self.B,action))*self.dt + self.sig*np.sqrt(self.dt)  * np.random.normal(size = 2)
                     new_state = np.array([X[n+1][0],X[n+1][1]], np.float32)
                    
                     new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
@@ -429,7 +429,7 @@ class CaseOne():
         # Plotting graph
         # Episodes versus Avg. Rewards
         self.AC.save_model()
-        self.dashboard(n_x,avg_reward_list,avg_stopping_list,self.AC.actor_loss)
+        self.dashboard(n_x,avg_reward_list,avg_stopping_list,self.AC)
     
     def run_simulation(self, num_sim,avg_reward_list):
         fig = plt.figure(figsize= (6,6))
@@ -446,16 +446,16 @@ class CaseOne():
                 state = tf.expand_dims(tf.convert_to_tensor(state),0)
                 
                 action = self.AC.actor(state).numpy()[0]
-
+                
                 if (done):
                     print('done')      
                 else:
 
                     if (self.discrete_problem):
                     
-                        X[n+1] =  (X[n] + action) + self.sig*np.random.normal(2)
+                        X[n+1] =  (X[n] + action) + self.sig*np.random.normal(size=2)
                     else:
-                        X[n+1] =  X[n] + (X[n] + action)*self.dt + np.sqrt(self.sig*self.dt)  * np.random.normal(size = 2)
+                        X[n+1] =  X[n] + (np.dot(self.A,X[n]) + np.dot(self.B,action))*self.dt + np.sqrt(self.sig*self.dt)  * np.random.normal(size = 2)
                     
                 if(done):
                     x[n:] = x[n]
@@ -524,6 +524,7 @@ class CaseOne():
         # for x axis poilcy
         policy_y = np.zeros((n_x,n_x))
         
+     
 
         for ix in range(n_x):
             for iy in range(n_x):
@@ -538,7 +539,7 @@ class CaseOne():
                 
                 V2[ix][iy] = v2
 
-                
+              
                 policy_x[ix][iy] = action[0][1]
                     
                 policy_y[ix][iy] = action[0][0]
@@ -621,7 +622,8 @@ class CaseOne():
 
         ax.plot_surface(X,Y, V1, label = 'approx value function 1')
         ax.plot_surface(X,Y, V2, label = 'approx value function 2')
-       
+     
+
         
         ax.set_title('value function t = {}'.format(t0))
   
