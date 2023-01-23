@@ -7,11 +7,22 @@ class Solution_2_D():
     def __init__(self,case_obj):
         
        # dX_t = (A X_t + B u_t) dt + sig * dB_t
-        
+        self.dt = case_obj.dt
         self.sig = case_obj.sig
 
+        self.discrete_problem =case_obj.discrete_problem
+
         # f(x,u) = f_A ||x||^2 + f_B ||u||^2
-        
+        if(self.discrete_problem):
+            self.A = case_obj.A
+            self.B = case_obj.B
+            self.f_A = case_obj.f_A
+            self.f_B = case_obj.f_B
+        else:
+            self.A = (np.identity(2)+  self.dt*case_obj.A)
+            self.B = self.dt*case_obj.B
+            self.f_A = self.dt*case_obj.f_A
+            self.f_B = self.dt*case_obj.f_B
 
         # g(x) = D * ||x||^2
         self.D = case_obj.D
@@ -28,11 +39,13 @@ class Solution_2_D():
             self.B = case_obj.B
             self.f_A = case_obj.f_A
             self.f_B = case_obj.f_B
+            self.Sigma = self.sig**2
         else:
             self.A = np.identity(2) + self.dt*case_obj.A
             self.B = self.dt * case_obj.B
             self.f_A = self.dt*case_obj.f_A
             self.f_B = self.dt*case_obj.f_B
+            self.Sigma = self.dt*self.sig**2
         
        
 
@@ -79,7 +92,7 @@ class Solution_2_D():
 
                 Q_old = self.Q_t[n+1]
             
-                Q = Q_old + np.trace(np.dot((self.sig**2)*np.identity(2), P_old))
+                Q = Q_old + np.trace((self.Sigma)*P_old)
                 self.Q_t[n] = Q
                 self.P_t[n] =  P
             
@@ -133,8 +146,10 @@ class Solution_2_D():
                     
                     c[n] = np.dot(y1,X[n]) + np.dot(y2,a)
                     
-                    X[n+1] = X[n] + a + self.sig*np.random.normal(2)
-                #X[n+1] = (1 + self.A * self.dt)* X[n] + self.B * self.dt* a + np.sqrt(self.sig * self.dt)*np.random.normal()
+                    if(self.discrete_problem):
+                        X[n+1] = np.dot(self.A,X[n]) + np.dot(self.B,a) + self.sig*np.random.normal(2)
+                    else:
+                        X[n+1] = X[n]+ np.dot(self.A,X[n]) + np.dot(self.B,a) + self.sig * np.sqrt(self.dt)*np.random.normal(2)
             cum_cost[i] = np.sum(c)
         
         print('optimal_cost', optimal_cost)
@@ -221,14 +236,23 @@ class Solution():
     def __init__(self,case_obj):
         
        # dX_t = (A X_t + B u_t) dt + sig * dB_t
-        self.A = case_obj.A
-        self.B = case_obj.B
+       # dX_t = (A X_t + B u_t) dt + sig * dB_t
+        self.dt = case_obj.dt
         self.sig = case_obj.sig
 
-        # f(x,u) = f_A ||x||^2 + f_B ||u||^2
-        self.f_A = case_obj.f_A
-        self.f_B = case_obj.f_B
+        self.discrete_problem =case_obj.discrete_problem
 
+        # f(x,u) = f_A ||x||^2 + f_B ||u||^2
+        if(self.discrete_problem):
+            self.A = case_obj.A
+            self.B = case_obj.B
+            self.f_A = case_obj.f_A
+            self.f_B = case_obj.f_B
+        else:
+            self.A = (1+  self.dt*case_obj.A)
+            self.B = self.dt*case_obj.B
+            self.f_A = self.dt*case_obj.f_A
+            self.f_B = self.dt*case_obj.f_B
         # g(x) = D * ||x||^2
         self.D = case_obj.D
         self.T = case_obj.T
@@ -288,8 +312,10 @@ class Solution():
                     a = self.poli[n][x_ind]
                     c[n] = self.f_A * np.linalg.norm(X[n])**2 + self.f_B * np.linalg.norm(a)**2
 
-                    X[n+1] = self.A * X[n] + self.B *a + self.sig * np.random.normal()
-                #X[n+1] = (1 + self.A * self.dt)* X[n] + self.B * self.dt* a + np.sqrt(self.sig * self.dt)*np.random.normal()
+                    if(self.discrete_problem):
+                        X[n+1] = self.A * X[n] + self.B *a + self.sig * np.random.normal()
+                    else:
+                        X[n+1] =X[n] + self.A * X[n] + self.B *a + self.sig *np.sqrt( self.dt)*np.random.normal()
             cum_cost[i] = np.sum(c)
         
         return self.V, self.poli, np.mean(cum_cost)

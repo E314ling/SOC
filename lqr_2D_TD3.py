@@ -67,7 +67,7 @@ class ActorCritic():
 
     def __init__(self, state_dim, action_dim, load_model):
 
-        self.batch_size = 512
+        self.batch_size = 1024
         self.max_memory_size = 1000000
 
         self.state_dim = state_dim
@@ -114,10 +114,10 @@ class ActorCritic():
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
       
         self.var = self.upper_action_bound
-        self.var_decay = 0.999
+        self.var_decay = 0.99
         self.lr_decay = 1
-        self.var_min = 0.1 *self.upper_action_bound
-        self.var_target = 0.2*self.upper_action_bound
+        self.var_min = 0.1 
+        self.var_target = 0.2
         self.update_frames = 2
 
        
@@ -151,14 +151,14 @@ class ActorCritic():
             
             critic_value_1 = self.critic_1([state_batch, action_batch])
             
-            critic_loss_1 = losses.MSE(y, critic_value_1)
+            critic_loss_1 = tf.reduce_mean((y-critic_value_1)**2)
 
         with tf.GradientTape() as tape2:
             tape2.watch(self.critic_2.trainable_variables)
             
             critic_value_2 = self.critic_2([state_batch, action_batch])
             
-            critic_loss_2 = losses.MSE(y, critic_value_2)
+            critic_loss_2 = tf.reduce_mean((y-critic_value_2)**2)
 
         
         critic_grad_1 = tape1.gradient(critic_loss_1, self.critic_1.trainable_variables) 
@@ -234,7 +234,7 @@ class ActorCritic():
         last_init = tf.random_uniform_initializer(minval=-0.003, maxval=0.003)
 
         inputs = layers.Input(shape=(self.state_dim+1,))
-       
+        
         out = layers.Dense(256, activation="relu")(inputs)
         out = layers.BatchNormalization()(out)
         out = layers.Dense(256, activation="relu")(out)
@@ -338,51 +338,60 @@ class CaseOne():
                 else:
                     return True
     
+
+    def start_state(self):
+        r1 = 0 + 0.1
+        r2 = 1.1 - 0.1
+        start_r = (r2 -r1)* np.random.rand() + r1
+        random_pi = 2*np.pi *np.random.rand()
+        
+        X = np.array([start_r*np.cos(random_pi),start_r*np.sin(random_pi)])
+
+        return X
     def run_episodes(self, n_x,V_t,A_t, base):
         ep_reward_list = []
         # To store average reward history of last few episodes
         avg_reward_list = []
         X = np.zeros((self.N,2), dtype= np.float32)
-        X[0] = 2*np.random.rand(self.state_dim) - 2
-
+        #X[0] = 1*np.random.rand(self.state_dim) - 1
+        X[0] = self.start_state()
         frame_num = 0
         for ep in range(self.num_episodes):
             
             n=0
             episodic_reward = 0
             while(True):
-               
+                #X[n] = np.clip(X[n], a_min= -3,a_max = 3)
                 state = np.array([n,X[n][0],X[n][1]], np.float32)
                
                 state = tf.expand_dims(tf.convert_to_tensor(state),0)
                 done = self.check_if_done(n,state)
+                action = self.AC.policy(state)[0]
 
                 if (done):
                     reward = self.g(n,X[n])
-                    action = self.AC.policy(state).numpy()[0]
+                    
                     X = np.zeros((self.N,2), dtype= np.float32)
-                    X[0] = 2*np.random.rand(self.state_dim) - 2
+                    #X[0] = 1*np.random.rand(self.state_dim) - 1
 
-                    X[0] = np.clip(X[0], a_min= -2,a_max = 2)
-
+                    #X[0] = np.clip(X[0], a_min= -1,a_max = 1)
+                    X[0] = self.start_state()
                     new_state = np.array([0,X[0][0],X[0][1]], np.float32)
                     new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
                          
                 else:
-
-                    action = self.AC.policy(state).numpy()[0]
 
                     reward = self.f(n,X[n], action)
                     if (self.discrete_problem):
                     
                         X[n+1] =  (X[n] + action) + self.sig*np.random.normal(2)
                     else:
-                        X[n+1] =  X[n] + (X[n] + action)*self.dt + self.sig*np.sqrt(self.dt)  * np.random.normal(2)
-                    new_state = np.array([n+1,X[n+1][0],X[n+1][1]], np.float32)
+                        X[n+1] =  X[n] + (X[n] + action)*self.dt + self.sig*np.sqrt(self.dt)  * np.random.normal(size=2)
+                    new_state = np.array([(n+1),X[n+1][0],X[n+1][1]], np.float32)
                     new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
                 
-                self.AC.buffer.record((state,action,reward, new_state, done))
-                
+                self.AC.buffer.record((state.numpy()[0],action.numpy(),reward, new_state.numpy()[0], done))
+               
                 episodic_reward += reward
                 # warm up
                 if (ep >= 100):
@@ -532,7 +541,7 @@ class CaseOne():
         #terminal value function
         for ix in range(n_x):
             for iy in range(n_x):
-                state = np.array([self.N-1,x_space[ix], y_space[iy]])
+                state = np.array([self.dt*(self.N-1),x_space[ix], y_space[iy]])
                 action = self.AC.actor(tf.expand_dims(tf.convert_to_tensor(state),0))
                 
                 P[ix] = action

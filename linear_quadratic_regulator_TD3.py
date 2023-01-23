@@ -75,8 +75,8 @@ class ActorCritic():
 
         self.gamma = 1
         self.tau = 0.001
-        self.lower_action_bound = -2
-        self.upper_action_bound = 2
+        self.lower_action_bound = -5
+        self.upper_action_bound = 5
 
         self.buffer = experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
 

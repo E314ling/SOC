@@ -94,13 +94,15 @@ class ActorCritic():
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
       
         self.var = self.upper_action_bound
-        self.var_target = 0.2
-        self.var_min = 0.5
+        self.var_target = 0.2 * self.upper_action_bound
+        self.var_min = 0.1 *  self.upper_action_bound
         self.var_decay = 0.999
         self.lr_decay = 1
 
         self.update_frames = 2
         self.actor_loss = []
+        self.critic_1_loss = []
+        self.critic_2_loss = []
        
     def save_model(self):
         self.critic_1.save('./Models/LQR_2D_TD3_critic_1.h5')
@@ -148,7 +150,7 @@ class ActorCritic():
         critic_grad_2 = tape2.gradient(critic_loss_2, self.critic_2.trainable_variables)
         self.critic_optimizer_2.apply_gradients(zip(critic_grad_2, self.critic_2.trainable_variables))
 
-        return critic_loss_1
+        return critic_loss_1,critic_loss_2
 
     @tf.function
     def update_actor(self, state_batch):
@@ -181,8 +183,11 @@ class ActorCritic():
 
         done_batch = tf.convert_to_tensor(self.buffer.done_buffer[batch_indices])
         
-        c_loss_1 = self.update_critic(state_batch, action_batch, reward_batch, next_state_batch, done_batch)
+        critic_loss_1,critic_loss_2 = self.update_critic(state_batch, action_batch, reward_batch, next_state_batch, done_batch)
         
+        self.critic_1_loss.append(critic_loss_1)
+        self.critic_2_loss.append(critic_loss_2)
+
         if (frame_num % self.update_frames == 0 and frame_num != 0):
             actor_loss = self.update_actor(state_batch)
             self.actor_loss.append(actor_loss)
@@ -206,9 +211,9 @@ class ActorCritic():
 
         input = tf.concat([state_input, action_input],1)
        
-        out_1 = layers.Dense(128, activation = 'relu')(input)
+        out_1 = layers.Dense(256, activation = 'relu')(input)
         out_1 = layers.BatchNormalization()(out_1)
-        out_1 = layers.Dense(128, activation = 'relu')(out_1)
+        out_1 = layers.Dense(256, activation = 'relu')(out_1)
         
         out_1 = layers.Dense(1, kernel_initializer= last_init)(out_1)
 
@@ -223,9 +228,9 @@ class ActorCritic():
 
         inputs = layers.Input(shape=(self.state_dim,))
        
-        out = layers.Dense(128, activation="relu")(inputs)
+        out = layers.Dense(256, activation="relu")(inputs)
         out = layers.BatchNormalization()(out)
-        out = layers.Dense(128, activation="relu")(out)
+        out = layers.Dense(256, activation="relu")(out)
        
         outputs = layers.Dense(self.action_dim, activation='tanh', kernel_initializer=last_init)(out)
 
@@ -280,7 +285,7 @@ class CaseOne():
         self.AC = ActorCritic(self.state_dim, self.action_dim, False)
 
         self.T = 1
-        self.N = 40
+        self.N = 20
         self.dt = self.T / self.N
 
         self.r1 = 1
@@ -355,7 +360,7 @@ class CaseOne():
             while(True):
                 
                 state = np.array([X[n][0],X[n][1]], np.float32)
-               
+                
                 done = self.check_if_done(n,state)
                 state = tf.expand_dims(tf.convert_to_tensor(state),0)
                 
@@ -403,16 +408,16 @@ class CaseOne():
                 frame_num += 1
 
                 if(done):
-                    stopping_time_list.append(n)
+                    stopping_time_list.append(self.dt*(n+ 0.5))
                     avg_stopping_time = np.mean(stopping_time_list[-500:])
                     avg_stopping_list.append(avg_stopping_time)
                     break
                 else:
                     n += 1
             if (ep == 0):
-                self.dashboard(n_x,avg_reward_list,avg_stopping_list,self.AC.actor_loss)
+                self.dashboard(n_x,avg_reward_list,avg_stopping_list,self.AC)
             if (ep % self.dashboard_num == 0 and ep >100):
-                self.dashboard(n_x,avg_reward_list,avg_stopping_list,self.AC.actor_loss)
+                self.dashboard(n_x,avg_reward_list,avg_stopping_list,self.AC)
             
             if (ep >= 100):
                 
@@ -472,7 +477,7 @@ class CaseOne():
         fig.savefig('.\Bilder_SOC\Sim_Balls_Episode_{}'.format(len(avg_reward_list)))
         #plt.show()
             
-    def dashboard(self,n_x,avg_reward_list, avg_stopping_list,actor_loss):
+    def dashboard(self,n_x,avg_reward_list, avg_stopping_list,AC: ActorCritic):
         if (len(self.change_V1) == 0):
             self.old_V1 = np.zeros((n_x,n_x))
             self.old_V2 = np.zeros((n_x,n_x))
@@ -493,31 +498,31 @@ class CaseOne():
 
         ax = fig.add_subplot(2, 3, 1)
         if (len(avg_reward_list)> 0):
-            ax.plot(avg_reward_list, label = 'Avg Reward: {}'.format(avg_reward_list[-1]))
+            ax.plot(avg_reward_list, label = 'Avg Reward: {}'.format(np.round(avg_reward_list[-1],2)))
         else:
             ax.plot(avg_reward_list)
-        ax.set_xlim([0,self.num_episodes])
+        ax.set_xlim([0,self.num_episodes-100])
         ax.set_xlabel('Episode')
         ax.set_title('Avg. Epsiodic Reward')
         ax.legend()
 
         ax = fig.add_subplot(2, 3, 2)
         if (len(avg_stopping_list) > 0):
-            ax.plot(avg_stopping_list, label = 'Avg stopping time: {}'.format(avg_stopping_list[-1]))
+            ax.plot(avg_stopping_list, label = 'Avg stopping time: {}'.format(np.round(avg_stopping_list[-1],2)))
         else:
             ax.plot(avg_stopping_list)
         ax.set_xlabel('Episode')
-        ax.set_xlim([0,self.num_episodes])
+        ax.set_xlim([0,self.num_episodes-100])
         ax.set_title('Avg. Stopping Time')
         ax.legend()
         
         
 
         # for y axis poilcy
-        policy_x_0 = np.zeros(n_x)
+        policy_x = np.zeros((n_x,n_x))
        
         # for x axis poilcy
-        policy_y_0 = np.zeros(n_x)
+        policy_y = np.zeros((n_x,n_x))
         
 
         for ix in range(n_x):
@@ -533,11 +538,10 @@ class CaseOne():
                 
                 V2[ix][iy] = v2
 
-                if (ix == 0):
-                    policy_x_0[iy] = action[0][1]
+                
+                policy_x[ix][iy] = action[0][1]
                     
-                if (iy == 0):
-                    policy_y_0[ix] = action[0][0]
+                policy_y[ix][iy] = action[0][0]
 
         change_V1 = (self.old_V1 - V1)**2
         change_V2 = (self.old_V2 - V2)**2
@@ -548,25 +552,70 @@ class CaseOne():
         self.old_V1 = V1
         self.old_V2 = V2
        
-        ax = fig.add_subplot(2, 3, 3)
-        ep_axis = np.linspace(0,len(avg_reward_list), len(self.change_V1))
-        ax.plot(ep_axis,self.change_V1, label = 'change MSE 1: {}'.format(self.change_V1[-1]))
-        ax.plot(ep_axis,self.change_V2,  label = 'change MSE 2: {}'.format(self.change_V2[-1]))
-        ax.set_xlabel('Episode')
-        #ax.set_xlim([0,self.num_episodes])
-        ax.set_title('Change MSE value function')
-        ax.legend()
+        
 
-        ax = fig.add_subplot(2, 3, 4)
-        ax.plot(x_space, policy_y_0, label = 'policy function approximation y = 0')
-        
-        ax.set_title('policy function y = 0 t = {}'.format(t0))
-        
-        ax = fig.add_subplot(2, 3, 5)
-        ax.plot(x_space, policy_x_0, label = 'policy function approximation x = 0')
-        
-        ax.set_title('policy function x = 0 t = {}'.format(t0))
         X,Y = np.meshgrid(x_space, y_space)
+
+        # ax = fig.add_subplot(2, 3, 3)
+        # ep_axis = np.linspace(0,len(avg_reward_list), len(self.change_V1))
+        # if (len(AC.critic_1_loss) != 0):
+        #     ax.plot(np.array(AC.critic_1_loss), label = 'critic loss 1: {}'.format(AC.critic_1_loss[-1]))
+        #     ax.plot(AC.critic_2_loss,  label = 'critic loss 2: {}'.format(AC.critic_2_loss[-1]))
+
+        # ax.set_xlabel('Training steps')
+      
+        # #ax.set_xlim([0,self.num_episodes])
+        # ax.set_title('critic losses')
+        # ax.legend()
+
+        ax = fig.add_subplot(2, 3, 3)
+         # for y axis poilcy
+        policy_x2 = np.zeros((20,20))
+        policy_y2 = np.zeros((20,20))
+        x_space2 = np.linspace(-self.r2,self.r2, 20)
+        y_space2 = np.linspace(-self.r2,self.r2, 20)
+        X2,Y2 = np.meshgrid(x_space2, y_space2)
+        # for x axis poilcy
+        policy_y2 = np.zeros((20,20))
+        for ix in range(20):
+            for iy in range(20):
+                state = np.array([x_space2[ix],y_space2[iy]])
+                action = self.AC.actor(tf.expand_dims(tf.convert_to_tensor(state),0))
+                
+                policy_x2[ix][iy] = action[0][1]
+                    
+                policy_y2[ix][iy] = action[0][0]
+
+        ax.quiver(X2,Y2, policy_x2, policy_y2)
+        time = np.linspace(0,2*np.pi,100)
+        circ_x_1 = self.r1*np.cos(time)
+        circ_y_1 = self.r1*np.sin(time)
+        ax.plot(circ_x_1, circ_y_1, color = 'black')
+       
+
+        circ_x_2 = self.r2*np.cos(time)
+        circ_y_2 = self.r2*np.sin(time)
+        ax.plot(circ_x_2, circ_y_2, color = 'black')
+       
+       
+        ax.set_title('policy function vector field t = {}'.format(t0))
+
+        ax = fig.add_subplot(2, 3, 4, projection = '3d')
+
+        ax.set_zlim(AC.lower_action_bound, AC.upper_action_bound)
+        ax.plot_surface(X,Y, policy_x, label = 'policy function approximation x-direction',cmap='viridis',lw=0.5, rstride=1, cstride=1, alpha=0.9, vmin = AC.lower_action_bound, vmax = AC.upper_action_bound)
+        ax.contour(X,Y,policy_x, levels = 9,lw=2, cmap = 'viridis', offset = AC.lower_action_bound, linestyles="solid", vmin = AC.lower_action_bound, vmax = AC.upper_action_bound)
+        #ax.contour(X, Y, policy_x, 10, lw=0.5, colors="k", linestyles="solid")
+        ax.set_title('policy function x-direction t = {}'.format(t0))
+        
+        ax = fig.add_subplot(2, 3, 5, projection = '3d')
+        ax.set_zlim(AC.lower_action_bound, AC.upper_action_bound)
+        ax.plot_surface(X,Y, policy_y, label = 'policy function approximation y-direction',cmap='viridis',lw=0.5, rstride=1, cstride=1, alpha=0.9, vmin = AC.lower_action_bound, vmax = AC.upper_action_bound)
+        ax.contour(X,Y,policy_y, levels = 9,lw=2, cmap = 'viridis', offset = AC.lower_action_bound, linestyles="solid", vmin = AC.lower_action_bound, vmax = AC.upper_action_bound)
+        
+        
+        ax.set_title('policy function y-direction t = {}'.format(t0))
+       
 
         ax = fig.add_subplot(2, 3, 6, projection = '3d')
 
@@ -576,9 +625,9 @@ class CaseOne():
         
         ax.set_title('value function t = {}'.format(t0))
   
-        fig.set_size_inches(w = 15, h= 7.5)
+        fig.set_size_inches(w = 15, h= 8)
         fig.tight_layout()
-        plt.subplots_adjust(wspace=0.15, hspace=0.3)
+        plt.subplots_adjust(wspace=0.15, hspace=0.2)
         fig.savefig('.\Bilder_SOC\TD3_Balls_Episode_{}'.format(len(avg_reward_list)))
         #plt.show()
     
