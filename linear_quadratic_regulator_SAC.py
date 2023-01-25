@@ -429,10 +429,10 @@ class CaseOne():
           
            V2[ix] = v2
 
-        error_v_1 = np.abs(V_t[t0] - V1)
-        error_v_2 = np.abs(V_t[t0] - V2)
-        self.mean_abs_error_v1.append(np.mean(np.abs(V_t[t0] - V1)))
-        self.mean_abs_error_v2.append(np.mean(np.abs(V_t[t0] - V2)))
+        error_v_1 = np.abs(-V_t[t0] - V1)
+        error_v_2 = np.abs(-V_t[t0] - V2)
+        self.mean_abs_error_v1.append(np.mean(np.abs(-V_t[t0] - V1)))
+        self.mean_abs_error_v2.append(np.mean(np.abs(-V_t[t0] - V2)))
 
         error_P = np.abs(A_t[t0] - P)
         self.mean_abs_error_P.append(np.mean(np.abs(A_t[t0] - P)))
