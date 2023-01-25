@@ -56,10 +56,8 @@ class ActorCritic():
         self.action_dim = action_dim
 
         self.gamma = 1
-        self.tau = 0.005
+        self.tau = 0.001
 
-        # for the entropy regulization
-        self.temp = 0.4
 
         self.lower_action_bound = -4
         self.upper_action_bound = 4
@@ -87,15 +85,19 @@ class ActorCritic():
             
             self.actor = self.get_actor()
             
-        self.critic_lr = 0.001
+        self.critic_lr = 0.0001
         self.critic_optimizer_1 = tf.keras.optimizers.Adam(self.critic_lr)
         self.critic_optimizer_2 = tf.keras.optimizers.Adam(self.critic_lr)
 
-        self.actor_lr = 0.001
+        self.actor_lr = 0.0001
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
       
-   
-        self.lr_decay = 0.9999
+        # for the entropy regulization
+        self.temp = tf.Variable(0.0, dtype= tf.float32)
+        self.target_entropy = -tf.constant(self.action_dim, dtype =tf.float32)
+        self.temp_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
+
+        self.lr_decay = 1
 
         self.update = 1
        
@@ -146,8 +148,8 @@ class ActorCritic():
       action = tf.tanh(action_)
     
       log_pi = dist.log_prob(action_)
-      log_pi_a = log_pi - tf.reduce_sum(tf.math.log(self.upper_action_bound*(1-action**2) + 1e-6), axis = 1, keepdims = True)
-      action = self.upper_action_bound*action
+      log_pi_a = log_pi - tf.reduce_sum(tf.math.log((1-action**2) + 1e-6), axis = 1, keepdims = True)
+      
       return action, log_pi_a
     
     @tf.function
@@ -168,13 +170,13 @@ class ActorCritic():
             
             critic_value_1 = self.critic_1([state_batch, action_batch])
             
-            critic_1_loss = losses.MSE(y,critic_value_1 )
+            critic_1_loss =  tf.reduce_mean((y-critic_value_1)**2)
 
         with tf.GradientTape() as tape2:
             
             critic_value_2 = self.critic_2([state_batch, action_batch])
             
-            critic_2_loss = losses.MSE(y,critic_value_2)
+            critic_2_loss =  tf.reduce_mean((y-critic_value_2)**2)
 
         critic_1_grad = tape1.gradient(critic_1_loss, self.critic_1.trainable_variables)   
         self.critic_optimizer_1.apply_gradients(zip(critic_1_grad, self.critic_1.trainable_variables))
@@ -182,8 +184,7 @@ class ActorCritic():
         critic_2_grad = tape2.gradient(critic_2_loss, self.critic_2.trainable_variables)   
         self.critic_optimizer_2.apply_gradients(zip(critic_2_grad, self.critic_2.trainable_variables))
 
-       
-
+    
     @tf.function
     def update_actor(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch):
         
@@ -205,6 +206,19 @@ class ActorCritic():
             zip(actor_grad, self.actor.trainable_variables)
         )
      
+    @tf.function
+    def update_temp(self, state_batch):
+
+        with tf.GradientTape() as tape:
+            mu,std = self.actor(state_batch)
+            pi_a, log_pi_a = self.transform_actor(mu,std )
+            alpha_loss = tf.reduce_mean(-self.temp*(log_pi_a + self.target_entropy))
+
+        variables = [self.temp]
+        grad = tape.gradient(alpha_loss, variables)
+        self.temp_optimizer.apply_gradients(zip(grad, variables))
+
+        return alpha_loss
      
     def learn(self,episode):
         # get sample
@@ -223,9 +237,10 @@ class ActorCritic():
 
         self.update_critic(state_batch, action_batch, reward_batch, next_state_batch, done_batch)
 
-        if (episode % self.update == 0 and episode != 0):
-            self.update_actor(state_batch, action_batch, reward_batch, next_state_batch, done_batch)
+        
+        self.update_actor(state_batch, action_batch, reward_batch, next_state_batch, done_batch)
 
+        self.update_temp(state_batch)
 
     @tf.function
     def update_target(self, target_weights, weights):
@@ -238,6 +253,8 @@ class CaseOne():
         # dX_t = (A X_t + B u_t) dt + sig * dB_t
         self.A = 1
         self.B = 1
+        self.f_A = 1
+        self.f_B = 1
         self.sig = np.sqrt(2)
 
         # f(x,u) = f_A ||x||^2 + f_B ||u||^2
@@ -297,7 +314,7 @@ class CaseOne():
         # To store average reward history of last few episodes
         avg_reward_list = []
         X = np.zeros((self.N), dtype= np.float32)
-        X[0] = 2.5*np.random.rand() - 2.5
+        X[0] = 2*np.random.rand() - 2
         for ep in range(self.num_episodes):
             
             n=0
@@ -307,35 +324,33 @@ class CaseOne():
                 state = tf.expand_dims(tf.convert_to_tensor(state),0)
                 done = self.check_if_done(n,state)
 
+                mu, std = self.AC.actor(state)
+                    
+                action_,_ = self.AC.transform_actor(mu,std)
+                action = self.AC.upper_action_bound*action_.numpy()[0]
+
                 if (done):
                     reward = -self.g(n,X[n])
-                    mu, std = self.AC.actor(state)
-                    
-
-                    action_,_ = self.AC.transform_actor(mu,std)
-                    action = action_.numpy()[0]
+                   
                     X = np.zeros((self.N), dtype= np.float32)
-                    X[0] = 2.5*np.random.rand() - 2.5
+                    X[0] = 2*np.random.rand() - 2
                     new_state = np.array([0,X[0]], np.float32)
                     new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
                          
                 else:
                     mu, std = self.AC.actor(state)
                     
-
-                    action_,_ = self.AC.transform_actor(mu,std)
-                    action = action_.numpy()[0]
                     reward = -self.f(n,X[n], action)
                     if (self.discrete_problem):
                     
                         X[n+1] =  (X[n] + action) + self.sig*np.random.normal()
                     else:
-                        X[n+1] =  X[n] + (X[n] + action)*self.dt + self.sig*np.sqrt(self.dt)  * np.random.normal()
+                        X[n+1] =  X[n] + (self.A*X[n] + self.B*action)*self.dt + self.sig*np.sqrt(self.dt)  * np.random.normal()
                     
                     new_state = np.array([n+1,X[n+1]], np.float32)
                     new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
 
-                self.AC.buffer.record((state,action,reward, new_state, done))
+                self.AC.buffer.record((state.numpy()[0],action_.numpy()[0],reward, new_state.numpy()[0], done))
                  
                 episodic_reward += reward
                 # warm up
@@ -383,8 +398,8 @@ class CaseOne():
         ax[0][0].plot(avg_reward_list)
         ax[0][0].set_xlabel('Episode')
         ax[0][0].set_ylabel('Avg. Epsiodic Reward')
-        ax[0][0].hlines(base,xmin = 0, xmax = len(avg_reward_list), color = 'black', label = 'baseline: {}'.format(np.round(base,)))
-        ax[0][0].set_title('baseline value: {} \n Avg 100 Episodes: {}'.format(np.round(base,2), np.round(avg_reward_list[-1],2)))
+        
+        ax[0][0].set_title('Avg 100 Episodes: {}'.format(np.round(avg_reward_list[-1],2)))
 
         for ix in range(n_x):
            state = np.array([t0,state_space[ix]])
@@ -398,12 +413,12 @@ class CaseOne():
             action = action_[0].numpy()
             action_arr[ia] = action
            
-           print('action_arr', action_arr)
-           action = np.mean(action_arr)
-           print(action)
-           std = np.std(action_arr)
-           print(std)
-           action_ = tf.expand_dims(tf.convert_to_tensor(action),0)
+           
+           action = np.mean(self.AC.upper_action_bound*action_arr)
+           
+           std = np.std(self.AC.upper_action_bound*action_arr)
+           
+           action_ = tf.expand_dims(tf.convert_to_tensor(np.mean(action_arr)),0)
 
            P[ix] = action
            stddev[ix] = 2*std
@@ -463,9 +478,9 @@ class CaseOne():
                action = action_[0].numpy()
                action_arr[ia] = action
            
-           action = np.mean(action_arr)
-           std = np.sqrt(np.var(action_arr))
-           action_ = tf.expand_dims(tf.convert_to_tensor(action),0)
+           action = np.mean(self.AC.upper_action_bound*action_arr)
+           std = np.sqrt(np.var(self.AC.upper_action_bound*action_arr))
+           action_ = tf.expand_dims(tf.convert_to_tensor(np.mean(action_arr)),0)
            P[ix] = action
 
            v1,v2 = self.AC.critic_1([tf.expand_dims(tf.convert_to_tensor(state),0),action_]),self.AC.critic_2([tf.expand_dims(tf.convert_to_tensor(state),0),action_])

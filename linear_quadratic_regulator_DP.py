@@ -248,11 +248,13 @@ class Solution():
             self.B = case_obj.B
             self.f_A = case_obj.f_A
             self.f_B = case_obj.f_B
+            self.Sigma = self.sig**2
         else:
             self.A = (1+  self.dt*case_obj.A)
             self.B = self.dt*case_obj.B
             self.f_A = self.dt*case_obj.f_A
             self.f_B = self.dt*case_obj.f_B
+            self.Sigma = self.dt*self.sig**2
         # g(x) = D * ||x||^2
         self.D = case_obj.D
         self.T = case_obj.T
@@ -279,11 +281,29 @@ class Solution():
             if (n == self.N-1):
                     P = self.P_t[n]
                     Q = self.Q_t[n]
+                    P_old = P
+                    AP = self.A*P_old
+                    BP = self.B*P_old
+                    APA = AP*self.A
+                    BPB = BP*self.B
+                    APB =AP*self.B
+                    BPA =BP*self.A
+                    inv = 1/(BPB + self.f_B)
             else:
                 P_old = self.P_t[n+1]
-                P = P_old + 1 - (P_old**2 / (P_old +1))
+                AP = self.A*P_old
+                BP = self.B*P_old
+                APA = AP*self.A
+                BPB = BP*self.B
+                APB =AP*self.B
+                BPA =BP*self.A
+                inv = 1/(BPB + self.f_B)
+                I1 = APB*inv
+                P = APA  - I1*BPA + self.f_A
                 Q_old = self.Q_t[n+1]
-                Q = Q_old + (self.sig) * P_old
+
+                Q = Q_old + self.Sigma * P_old
+
                 self.Q_t[n] = Q
                 self.P_t[n] =  P
            
@@ -291,7 +311,8 @@ class Solution():
                 x = x_space[i]
                   
                 V_t[i] = P *x**2 + Q
-                A_t[i] = -(P /(P+1)) *x
+                Kt = -inv*BPA
+                A_t[i] = x*Kt
                 
             self.V[n] = V_t
             self.poli[n] = A_t
