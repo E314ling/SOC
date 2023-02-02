@@ -118,9 +118,9 @@ class Solution_2_D():
         # ax[1].plot_surface(X,Y,self.V[0])
         # plt.show()
 
-        cum_cost = np.zeros(1000)
+        cum_cost = np.zeros(500)
 
-        for i in range(1000):
+        for i in range(500):
             X = np.zeros((self.N, 2))
             X[0] = 2*np.random.rand(2) - 2
             
@@ -128,17 +128,27 @@ class Solution_2_D():
             for n in range(self.N):
                 X[n] = np.clip(X[n], a_min= -2,a_max = 2)
                 
+
                 
                 if (n== self.N-1):
                     y = np.dot(np.transpose(X[n]), self.D)
                     c[n] = np.dot(y,X[n])
                 else:
-                    #a = self.poli[n][ind]
-                    inv = np.linalg.inv(np.identity(2) + self.P_t[n+1])
+                    P_old = self.P_t[n+1]
+
+             
+                    AP = np.dot(self.A,P_old)
+                    BP = np.dot(self.B,P_old)
+                    APA = np.dot(AP,self.A)
+                    BPB = np.dot(BP,self.B)
+                    APB = np.dot(AP,self.B)
+                    BPA = np.dot(BP, self.A)
+                    inv = np.linalg.inv(BPB + self.f_B)
+                    I1 = np.dot(APB, inv)
+                    P = APA  - np.dot(I1, BPA) + self.f_A
                     
-                    y_bar = np.dot(self.P_t[n+1],X[n])
                     
-                    a = -np.dot(inv, y_bar)
+                    a =  np.dot(Kt, X[n])
 
                     y1= np.dot(np.transpose(X[n]), self.f_A)
                     
@@ -149,7 +159,7 @@ class Solution_2_D():
                     if(self.discrete_problem):
                         X[n+1] = np.dot(self.A,X[n]) + np.dot(self.B,a) + self.sig*np.random.normal(2)
                     else:
-                        X[n+1] = X[n]+ np.dot(self.A,X[n]) + np.dot(self.B,a) + self.sig * np.sqrt(self.dt)*np.random.normal(2)
+                        X[n+1] =  X[n] + (X[n] + a)*self.dt + self.sig*np.sqrt(self.dt)  * np.random.normal(size=2)
             cum_cost[i] = np.sum(c)
         
         print('optimal_cost', optimal_cost)
@@ -317,9 +327,9 @@ class Solution():
             self.V[n] = V_t
             self.poli[n] = A_t
         
-        cum_cost = np.zeros(1000)
+        cum_cost = np.zeros(500)
 
-        for i in range(1000):
+        for i in range(500):
             X = np.zeros(self.N)
             X[0] = 2*np.random.rand() - 2
 

@@ -69,7 +69,7 @@ class ActorCritic():
     def __init__(self, state_dim, action_dim, load_model):
 
         self.batch_size = 256
-        self.max_memory_size = 100000
+        self.max_memory_size = 1000000
 
         self.state_dim = state_dim
         self.action_dim = action_dim
@@ -108,11 +108,11 @@ class ActorCritic():
             self.target_actor.set_weights(self.actor.get_weights())
 
 
-        self.critic_lr = 0.0001
+        self.critic_lr = 0.0003
         self.critic_optimizer_1 = tf.keras.optimizers.Adam(self.critic_lr)
         self.critic_optimizer_2 = tf.keras.optimizers.Adam(self.critic_lr)
        
-        self.actor_lr = 0.0001
+        self.actor_lr = 0.0003
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
       
         # for the entropy regulization
@@ -305,14 +305,14 @@ class CaseOne():
         # g(x) = D * ||x||^2
         self.D = np.identity(2)
 
-        self.num_episodes = 6100
+        self.num_episodes = 5100
         self.warmup = 100
         self.state_dim = 2
         self.action_dim = 2
         self.AC = ActorCritic(self.state_dim, self.action_dim, False)
 
         self.T = 1
-        self.N = 20
+        self.N = 50
         self.dt = self.T/self.N
 
         self.r = 0
@@ -361,7 +361,7 @@ class CaseOne():
 
     def start_state(self):
         r1 = 0 + 0.1
-        r2 = 2.1 - 0.1
+        r2 = 3 - 0.1
         start_r = (r2 -r1)* np.random.rand() + r1
         random_pi = 2*np.pi *np.random.rand()
         
@@ -480,17 +480,11 @@ class CaseOne():
                 state = np.array([t0,x_space[ix],y_space[iy]])
                 mu, std = self.AC.actor(tf.expand_dims(tf.convert_to_tensor(state),0))
 
-                action_arr = np.zeros((20,AC.action_dim))
-                for ia in range(20):
-                    action_,_ = self.AC.transform_actor(mu,std)
-           
-                    action = action_[0].numpy()
-                    action_arr[ia] = action
+                 
+                action_ = tf.tanh(mu)
+                action = self.AC.upper_action_bound*action_
                 
-                action = np.mean(self.AC.upper_action_bound*action_arr,axis = 0)
-                action_ = tf.expand_dims(tf.convert_to_tensor(np.mean(action_arr,axis = 0)),0)
-                
-                P[ix][iy] = action
+                P[ix][iy] = action[0]
 
                 v1,v2 = self.AC.critic_1([tf.expand_dims(tf.convert_to_tensor(state),0),action_]),self.AC.critic_2([tf.expand_dims(tf.convert_to_tensor(state),0),action_])
                 
@@ -500,11 +494,11 @@ class CaseOne():
 
                
                 if (ix == 0):
-                    policy_x_0[iy] = action[1]
+                    policy_x_0[iy] = action[0][1]
                     
                     policy_x_0_true[iy] = A_t[t0][ix][iy][1]
                 if (iy == 0):
-                    policy_y_0[ix] = action[0]
+                    policy_y_0[ix] = action[0][0]
                     policy_y_0_true[ix] = A_t[t0][ix][iy][0]
 
         error_v_1 = (-V_t[t0] - V1)**2
@@ -578,17 +572,11 @@ class CaseOne():
                 state = np.array([(self.N-1),x_space[ix], y_space[iy]])
                 mu, std = self.AC.actor(tf.expand_dims(tf.convert_to_tensor(state),0))
 
-                action_arr = np.zeros((20,AC.action_dim))
-                for ia in range(20):
-                    action_,_ = self.AC.transform_actor(mu,std)
-           
-                    action = action_[0].numpy()
-                    action_arr[ia] = action
                 
-                action = np.mean(self.AC.upper_action_bound*action_arr,axis = 0)
-                action_ = tf.expand_dims(tf.convert_to_tensor(np.mean(action_arr,axis = 0)),0)
+                action_ = tf.tanh(mu)
+                action = self.AC.upper_action_bound*action_
                 
-                P[ix][iy] = action
+                P[ix][iy] = action[0]
 
                 v1,v2 = self.AC.critic_1([tf.expand_dims(tf.convert_to_tensor(state),0),action_]),self.AC.critic_2([tf.expand_dims(tf.convert_to_tensor(state),0),action_])
                 
