@@ -75,24 +75,20 @@ class ActorCritic():
 
         self.gamma = 1
         self.tau = 0.001
-        self.tau_actor = 0.001
-        self.lower_action_bound = -5
-        self.upper_action_bound = 5
+        self.lower_action_bound = -2
+        self.upper_action_bound = 2
 
         self.buffer = experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
 
         
         # init the neural nets
         if (load_model):
-            self.critic_1 = tf.keras.models.load_model('./Models/LQR_2D_TD3_critic_1.h5')
-            self.target_critic_1 = tf.keras.models.load_model('./Models/LQR_2D_TD3_critic_1.h5')
-
-            self.critic_2 = tf.keras.models.load_model('./Models/LQR_2D_TD3_critic_2.h5')
-            self.target_critic_2 = tf.keras.models.load_model('./Models/LQR_2D_TD3_critic_2.h5')
+            self.critic = tf.keras.models.load_model('./Models/LQR_TD3_critic.h5')
+            self.target_critic = tf.keras.models.load_model('./Models/LQR_TD3_critic.h5')
 
 
-            self.actor = tf.keras.models.load_model('./Models/LQR_2D_TD3_Actor.h5')
-            self.target_actor = tf.keras.models.load_model('./Models/LQR_2D_TD3_Actor.h5')
+            self.actor = tf.keras.models.load_model('./Models/LQR_DDPG_Actor.h5')
+            self.target_actor = tf.keras.models.load_model('./Models/LQR_DDPG_Actor.h5')
         else:
             self.critic_1 = self.get_critic_NN()
             self.target_critic_1 = self.get_critic_NN()
@@ -106,20 +102,16 @@ class ActorCritic():
             self.target_actor = self.get_actor_NN()
             self.target_actor.set_weights(self.actor.get_weights())
 
-
-        self.critic_lr = 0.00003
+        self.critic_lr = 0.0003
         self.critic_optimizer_1 = tf.keras.optimizers.Adam(self.critic_lr)
         self.critic_optimizer_2 = tf.keras.optimizers.Adam(self.critic_lr)
        
-        self.actor_lr = 0.00003
+        self.actor_lr = 0.0003
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
       
-        self.var = 0.5
+        self.var = 0.1
         self.var_decay = 0
         self.lr_decay = 1
-        self.var_min = 0.1
-        self.var_target = 0.2
-        self.update_frames = 2
 
        
     def save_model(self):
@@ -127,6 +119,7 @@ class ActorCritic():
         self.critic_2.save('./Models/LQR_2D_TD3_critic_2.h5')
         
         self.actor.save('./Models/LQR_2D_TD3_actor.h5')
+
     def update_lr(self):
         self.critic_lr = self.critic_lr * self.lr_decay
         self.critic_optimizer_1 = tf.keras.optimizers.Adam(self.critic_lr)
@@ -136,7 +129,7 @@ class ActorCritic():
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
 
     def update_var(self):
-        self.var = np.max([self.var_min,self.var * self.var_decay])
+        self.var = np.max([0.1,self.var * self.var_decay])
     
     @tf.function
     def update_critic(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch):
@@ -167,7 +160,7 @@ class ActorCritic():
 
         critic_grad_2 = tape2.gradient(critic_loss_2, self.critic_2.trainable_variables)
         self.critic_optimizer_2.apply_gradients(zip(critic_grad_2, self.critic_2.trainable_variables))
-
+       
 
     @tf.function
     def update_actor(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch):
@@ -184,14 +177,17 @@ class ActorCritic():
             zip(actor_grad, self.actor.trainable_variables)
         )
 
-   
-    def learn(self,frame_num):
+
+         
+    def learn(self,episode):
         # get sample
 
         record_range = min(self.buffer.buffer_counter, self.buffer.buffer_capacity)
 
         batch_indices = np.random.choice(record_range, self.batch_size)
-
+        
+        batch_indices = np.append(batch_indices, record_range)
+        
         state_batch = tf.convert_to_tensor(self.buffer.state_buffer[batch_indices])
         action_batch = tf.convert_to_tensor(self.buffer.action_buffer[batch_indices])
         reward_batch = tf.convert_to_tensor(self.buffer.reward_buffer[batch_indices])
@@ -201,20 +197,16 @@ class ActorCritic():
         
         self.update_critic(state_batch, action_batch, reward_batch, next_state_batch, done_batch)
 
-        if (frame_num % self.update_frames == 0 and frame_num != 0):
+        if (episode % 2 == 0 and episode != 0):
             self.update_actor(state_batch, action_batch, reward_batch, next_state_batch, done_batch)
 
 
     @tf.function
-    def update_target_critic(self, target_weights, weights):
+    def update_target(self, target_weights, weights):
         for (a,b) in zip(target_weights, weights):
             a.assign(self.tau *b + (1-self.tau) *a)
 
-    @tf.function
-    def update_target_actor(self, target_weights, weights):
-        for (a,b) in zip(target_weights, weights):
-            a.assign(self.tau_actor *b + (1-self.tau_actor) *a)
-
+        
     def get_critic_NN(self):
         # input [state, action]
         last_init = tf.random_uniform_initializer(minval=-0.003, maxval=0.003)
@@ -240,15 +232,14 @@ class ActorCritic():
         last_init = tf.random_uniform_initializer(minval=-0.003, maxval=0.003)
 
         inputs = layers.Input(shape=(self.state_dim+1,))
-        
+       
         out = layers.Dense(128, activation="relu")(inputs)
         out = layers.BatchNormalization()(out)
         out = layers.Dense(128, activation="relu")(out)
-        
         outputs = layers.Dense(self.action_dim, activation='tanh', kernel_initializer=last_init)(out)
-
+       
         # Our upper bound is 2.0 .
-        #outputs = outputs * self.upper_action_bound
+      
         model = tf.keras.Model(inputs, outputs)
         return model
 
@@ -268,7 +259,7 @@ class ActorCritic():
         sampled_actions = self.target_actor(state)
         
         #noice = self.noice_Obj()
-        noice = tf.random.normal(shape = sampled_actions.get_shape(), mean = 0.0, stddev = self.var_target, dtype = tf.float32)
+        noice = tf.random.normal(shape = sampled_actions.get_shape(), mean = 0.0, stddev = 0.2, dtype = tf.float32)
         noice = tf.clip_by_value(noice, -0.5, 0.5)
         sampled_actions = sampled_actions + noice
         
@@ -280,25 +271,24 @@ class CaseOne():
 
     def __init__(self):
         # dX_t = (A X_t + B u_t) dt + sig * dB_t
-        self.A = np.identity(2)
-        self.B = np.identity(2)
+        self.A = 1
+        self.B = 1
         self.sig = np.sqrt(2)
 
-        self.discrete_problem = False
         # f(x,u) = f_A ||x||^2 + f_B ||u||^2
-        self.f_A = np.identity(2)
-        self.f_B = np.identity(2)
-
+        self.f_A = 1
+        self.f_B = 1
+       
         # g(x) = D * ||x||^2
-        self.D = np.identity(2)
+        self.D = 1
 
-        self.num_episodes = 2100
-        self.warmup = 100
-        self.state_dim = 2
-        self.action_dim = 2
-        self.AC = ActorCritic(self.state_dim, self.action_dim, True)
+        self.num_episodes = 5100
+        self.state_dim = 1
+        self.action_dim = 1
+        
+        self.AC = ActorCritic(self.state_dim, self.action_dim, False)
 
-        self.T = 1
+        self.T = 5
         self.N = 50
         self.dt = self.T/self.N
 
@@ -306,126 +296,138 @@ class CaseOne():
         self.dashboard_num = 100
         self.mean_abs_error_v1 = []
         self.mean_abs_error_v2 = []
-        self.mean_abs_error_P_x_0 = []
-        self.mean_abs_error_P_y_0 = []
+        self.mean_abs_error_P = []
+
+        self.mu = 0
+        self.alpha = 1
 
     def f(self, n,x,a):
+        
+        return self.dt*(0.5*a**2)
+        
 
-        y1= np.dot(np.transpose(x), self.f_A)
-        
-        y2 = np.dot(np.transpose(a), self.f_B)
-      
-        if(self.discrete_problem):
-            return np.float32(np.dot(y1,x) + np.dot(y2,a))
-        else:
-            return self.dt*(np.float32(np.dot(y1,x) + np.dot(y2,a)))
-        
     def g(self, n,x):
-        y = np.dot(np.transpose(x), self.D)
-        return np.dot(y,x)
+        return self.alpha*x
     
-    def has_exit(self,x):
-        if self.r == 0:
-            return False
-        else:
-            if (np.linalg.norm(x) < self.r):
-                return False
-            else:
-                return True
-
+   
     def check_if_done(self,n,x):
         if n == self.N-1:
             return True
         else:
-            if self.r == 0:
-                return False
-            else:
-                if (np.linalg.norm(x) < self.r):
-                    return False
-                else:
-                    return True
-    
+            return False
+    def get_baseline(self):
 
-    def start_state(self):
-        r1 = 0 + 0.1
-        r2 = 3 - 0.1
-        start_r = (r2 -r1)* np.random.rand() + r1
-        random_pi = 2*np.pi *np.random.rand()
-        
-        X = np.array([start_r*np.cos(random_pi),start_r*np.sin(random_pi)])
+        num_sim = 500
+        reward_arr = np.zeros(num_sim)
 
-        return X
-    def run_episodes(self, n_x,V_t,A_t, base):
-        ep_reward_list = []
-        # To store average reward history of last few episodes
-        avg_reward_list = []
-        X = np.zeros((self.N,2), dtype= np.float32)
-        #X[0] = 1*np.random.rand(self.state_dim) - 1
-        X[0] = self.start_state()
-        frame_num = 0
-        for ep in range(self.num_episodes):
-            
-            n=0
+        for i_sim in range(num_sim):
+            X = np.zeros((self.N), dtype= np.float32)
+            X[0] = 2*np.random.rand() - 2
             episodic_reward = 0
+            n = 0
             while(True):
-                #X[n] = np.clip(X[n], a_min= -3,a_max = 3)
-                state = np.array([n,X[n][0],X[n][1]], np.float32)
-               
+                state = np.array([n,X[n]], np.float32)
                 state = tf.expand_dims(tf.convert_to_tensor(state),0)
+                
                 done = self.check_if_done(n,state)
-
-                if (ep <= self.warmup):
-                    action = tf.convert_to_tensor(2* np.random.rand(2) -1)
-                    action_env = self.AC.upper_action_bound * action
-                else:
-                    action = self.AC.policy(state)[0]
-                    action_env = self.AC.upper_action_bound*action
+                
+                
+                action_env = self.opt_control(X[n], self.dt*n)
 
                 if (done):
                     reward = self.g(n,X[n])
                     
-                    X = np.zeros((self.N,2), dtype= np.float32)
-                    #X[0] = 1*np.random.rand(self.state_dim) - 1
-
-                    #X[0] = np.clip(X[0], a_min= -1,a_max = 1)
-                    X[0] = self.start_state()
-                    new_state = np.array([0,X[0][0],X[0][1]], np.float32)
+                    X = np.zeros((self.N), dtype= np.float32)
+                    X[0] = 2*np.random.rand() - 2
+                    new_state = np.array([0,X[0]], np.float32)
                     new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
                          
                 else:
 
                     reward = self.f(n,X[n], action_env)
-                    if (self.discrete_problem):
                     
-                        X[n+1] =  (X[n] + action_env) + self.sig*np.random.normal(size = 2)
-                    else:
-                        X[n+1] =  X[n] + (X[n] + action_env)*self.dt + self.sig*np.sqrt(self.dt)  * np.random.normal(size=2)
-                    new_state = np.array([(n+1),X[n+1][0],X[n+1][1]], np.float32)
+                    X[n+1] =  X[n] + (self.mu - X[n] + self.sig *action_env)*self.dt + self.sig*np.sqrt(self.dt)  * np.random.normal()
+                    
+                    new_state = np.array([n+1,X[n+1]], np.float32)
                     new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
+
                 
-                self.AC.buffer.record((state.numpy()[0],action.numpy(),reward, new_state.numpy()[0], done))
+               
+                episodic_reward += reward
+
+                if(done):
+                    reward_arr[i_sim] = episodic_reward
+                    break
+                else:
+                    n += 1
+        return np.mean(reward_arr)
+        
+    def run_episodes(self, n_x):
+        base = self.get_baseline()
+        ep_reward_list = []
+        # To store average reward history of last few episodes
+        avg_reward_list = []
+        
+        X = np.zeros((self.N), dtype= np.float32)
+        X[0] = 2*np.random.rand() - 2
+        for ep in range(self.num_episodes):
+            
+            n=0
+            episodic_reward = 0
+            while(True):
+                state = np.array([n,X[n]], np.float32)
+                state = tf.expand_dims(tf.convert_to_tensor(state),0)
+                
+                done = self.check_if_done(n,state)
+                
+                
+                if (ep <= 100):
+                    action = 2* np.random.rand() -1
+                    action_env = self.AC.upper_action_bound * action
+                else:
+                    action = self.AC.policy(state).numpy()[0][0]
+                    action_env = self.AC.upper_action_bound*action
+
+                if (done):
+                    reward = self.g(n,X[n])
+                    
+                    X = np.zeros((self.N), dtype= np.float32)
+                    X[0] = 2*np.random.rand() - 2
+                    new_state = np.array([0,X[0]], np.float32)
+                    new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
+                         
+                else:
+
+                    reward = self.f(n,X[n], action_env)
+                    
+                    X[n+1] =  X[n] + (self.mu - X[n] + self.sig *action_env)*self.dt + self.sig*np.sqrt(self.dt)  * np.random.normal()
+                    
+                    new_state = np.array([n+1,X[n+1]], np.float32)
+                    new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
+
+                self.AC.buffer.record((state.numpy()[0],action,reward, new_state.numpy()[0], done))
                
                 episodic_reward += reward
                 # warm up
-                if (ep >= self.warmup):
+                if (ep >= 100):
                     self.AC.learn(n)
                     
-                    if (n % self.AC.update_frames == 0 and n != 0):
-                        self.AC.update_target_critic(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
-                        self.AC.update_target_critic(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
-                        self.AC.update_target_actor(self.AC.target_actor.variables, self.AC.actor.variables)
+                    if (n % 2 == 0 and n != 0):
+                        self.AC.update_target(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
+                        self.AC.update_target(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
+                        self.AC.update_target(self.AC.target_actor.variables, self.AC.actor.variables)
                         self.AC.update_lr()
                         self.AC.update_var()
-                frame_num += 1
+
                 if(done):
                     break
                 else:
                     n += 1
 
             if (ep % self.dashboard_num == 0):
-                self.dashboard(n_x,V_t,A_t,avg_reward_list,self.AC,base)
+                self.dashboard(n_x,avg_reward_list,self.AC, base)
             
-            if (ep >= self.warmup):
+            if (ep >= 100):
                 
                 ep_reward_list.append(episodic_reward)
                 # Mean of last 40 episodes
@@ -435,165 +437,134 @@ class CaseOne():
         # Plotting graph
         # Episodes versus Avg. Rewards
         self.AC.save_model()
-        self.dashboard(n_x,V_t,A_t,avg_reward_list,self.AC,base)
-        
-    def dashboard(self,n_x,V_t,A_t,avg_reward_list,AC: ActorCritic,base):
+        self.dashboard(n_x,avg_reward_list,self.AC, base)
+    
+    def value_fct(self,x,t):
+        return self.alpha*( (x-self.mu)*np.exp(t-self.T) + self.mu ) - ((self.alpha**2 * self.sig**2)/4)* (1 - np.exp(2*(t-self.T)))
 
-        x_space = np.linspace(-2,2, n_x)
-        y_space = np.linspace(-2,2, n_x)
+    def opt_control(self, x,t):
+        return  -self.sig*self.alpha*np.exp(t-self.T)
 
-        fig = plt.figure()
+    def dashboard(self,n_x,avg_reward_list,AC:ActorCritic,base):
+
+        state_space = np.linspace(-2,2, n_x)
         
-        V1 = np.zeros((n_x,n_x))
-        P = np.zeros((n_x,n_x,2))
-        V2 = np.zeros((n_x,n_x))
+        fig, ax = plt.subplots(2,3)
+        
+        V1 = np.zeros(n_x)
+        P = np.zeros(self.N)
+        V2 = np.zeros(n_x)
+        V_true = np.zeros(n_x)
+        optimal_control = np.zeros(self.N)
+        time_axis = np.linspace(0,self.T, self.N)
         t0 = 1
 
-        ax = fig.add_subplot(2, 4, 1)
-        ax.plot(avg_reward_list)
-        ax.set_xlabel('Episode')
-        ax.set_xlim([0,self.num_episodes])
-        ax.set_ylabel('Avg. Epsiodic Reward')
-        ax.hlines(base,xmin = 0, xmax = self.num_episodes, color = 'black', label = 'baseline: {}'.format(np.round(base,)))
-        ax.legend()
-        if(len(avg_reward_list) > 0):
-            ax.set_title('Avg Cost 500 Episodes: {}'.format(np.round(avg_reward_list[-1],2)))
-
-        # for y axis poilcy
-        policy_x_0 = np.zeros(n_x)
-        policy_x_0_true = np.zeros(n_x)
-        # for x axis poilcy
-        policy_y_0 = np.zeros(n_x)
-        policy_y_0_true = np.zeros(n_x)
+        ax[0][0].plot(avg_reward_list)
+        ax[0][0].set_xlabel('Episode')
+        ax[0][0].set_ylabel('Avg. Epsiodic Reward')
+        ax[0][0].hlines(base,xmin = 0, xmax = self.num_episodes, color = 'black', label = 'base = {}'.format(base))
+        ax[0][0].legend()
+        ax[0][0].set_xlim([0,self.num_episodes])
+       
+        if (len(avg_reward_list)> 0):
+            ax[0][0].set_title('Avg 500 Episodes: {}'.format( np.round(avg_reward_list[-1],2)))
 
         for ix in range(n_x):
-            for iy in range(n_x):
-                state = np.array([t0,x_space[ix],y_space[iy]])
-                action = self.AC.actor(tf.expand_dims(tf.convert_to_tensor(state),0))
-                
-                P[ix][iy] = AC.upper_action_bound* action[0]
+           state = np.array([t0,state_space[ix]])
+           action = self.AC.actor(tf.expand_dims(tf.convert_to_tensor(state),0)).numpy()[0]
+          
+           v1,v2 = self.AC.critic_1([tf.expand_dims(tf.convert_to_tensor(state),0),action]), self.AC.critic_2([tf.expand_dims(tf.convert_to_tensor(state),0),action])
+           
+           V1[ix] = v1
+          
+           V2[ix] = v2
 
-                v1,v2 = self.AC.critic_1([tf.expand_dims(tf.convert_to_tensor(state),0),action]),self.AC.critic_2([tf.expand_dims(tf.convert_to_tensor(state),0),action])
-                
-                V1[ix][iy] = v1
-                
-                V2[ix][iy] = v2
+           V_true[ix] = self.value_fct(state_space[ix], self.dt*t0)
 
-               
-                if (ix == 0):
-                    policy_x_0[iy] = AC.upper_action_bound*action[0][1]
-                    
-                    policy_x_0_true[iy] = A_t[t0][ix][iy][1]
-                if (iy == 0):
-                    policy_y_0[ix] = AC.upper_action_bound*action[0][0]
-                    policy_y_0_true[ix] = A_t[t0][ix][iy][0]
+        for t in range(self.N):
+            x = 0
+            action = AC.upper_action_bound* self.AC.actor(tf.expand_dims(tf.convert_to_tensor(np.array([x,t])),0)).numpy()[0]
+            optimal_control[t] = self.opt_control(x, self.dt*t)
+            P[t] = action
 
-        error_v_1 = (V_t[t0] - V1)**2
-        error_v_2 = (V_t[t0] - V2)**2
-        self.mean_abs_error_v1.append(np.mean((V_t[t0] - V1)**2))
-        self.mean_abs_error_v2.append(np.mean((V_t[t0] - V2)**2))
 
-        error_P_x_0 = (policy_x_0 - policy_x_0_true)**2
-        self.mean_abs_error_P_x_0.append(np.mean((policy_x_0 - policy_x_0_true)**2))
+        error_v_1 = (V_true - V1)**2
+        error_v_2 = (V_true - V2)**2
+        self.mean_abs_error_v1.append(np.mean((V_true - V1)**2))
+        self.mean_abs_error_v2.append(np.mean((V_true - V2)**2))
 
-        error_P_y_0 = (policy_y_0 - policy_y_0_true)**2
-        self.mean_abs_error_P_y_0.append(np.mean((policy_y_0 - policy_y_0_true)**2))
-
-        X,Y = np.meshgrid(x_space, y_space)
-
-        ax = fig.add_subplot(2, 4, 2, projection = '3d')
-
-        ax.plot_surface(X,Y, V1, label = 'approx value function 1')
-        ax.plot_surface(X,Y, V2, label = 'approx value function 1')
-        ax.plot_surface(X,Y, V_t[t0], label = 'true value function', color = 'black', alpha = 0.4)
-        ax.set_xlabel('x')
-        ax.set_ylabel('y')
-        ax.set_title('value function n = {}'.format(t0))
-
-        ax = fig.add_subplot(2, 4, 3)
-        ax.plot(x_space, policy_x_0, label = 'policy function approximation x = 0')
-        ax.plot(x_space, policy_x_0_true,label = 'true policy function x = 0', color = 'black')
+        error_P = np.abs(optimal_control - P)
+        self.mean_abs_error_P.append(np.mean(np.abs(optimal_control - P)))
         
-        ax.set_xlabel('y')
-        ax.set_title('policy function x = 0 n = {}'.format(t0))
-
-        ax = fig.add_subplot(2, 4, 4)
-        ax.plot(x_space, policy_y_0, label = 'policy function approximation y = 0')
-        ax.plot(x_space, policy_y_0_true,label = 'true policy function y= 0', color = 'black')
-        ax.set_xlabel('x')
+        ax[0][1].plot(state_space, V1, label = 'approx value function 1')
+        ax[0][1].plot(state_space, V2,label = 'approx value function 1')
+        ax[0][1].plot(state_space,V_true, label = 'true value function', color = 'black')
         
-        ax.set_title('policy function y = 0 n = {}'.format(t0))
+        ax[0][1].set_title('value function n = {}'.format(t0+1))
+        ax[0][1].set_ylim([-2,2])
+        ax[0][1].set_xlabel('x')
+
+        ax[0][2].plot(time_axis, P, label = 'policy function approximation')
+        ax[0][2].plot(time_axis, optimal_control,label = 'true policy function', color = 'black')
+        
+        ax[0][2].set_title('policy function x = 0')
+        ax[0][2].set_ylim([-3.1,3.1])
+        ax[0][2].set_xlabel('time')
 
         ###########################################################
-        episode_ax = self.dashboard_num * np.linspace(1,len(self.mean_abs_error_P_x_0), len(self.mean_abs_error_P_x_0))
-        ax = fig.add_subplot(2, 4, 6)
-        #ax.scatter(episode_ax,  self.mean_abs_error_v1, label = 'MAE 1: {}'.format(np.round(np.mean(error_v_1),2)))
-        #ax.scatter(episode_ax,  self.mean_abs_error_v2, label = 'MAE 2: {}'.format(np.round(np.mean(error_v_2),2)))
-        ax.set_xlim([0,self.num_episodes])
-        ax.plot(episode_ax,  self.mean_abs_error_v1, label = 'MSE 1: {}'.format(np.round(np.mean(error_v_1),2)))
-        ax.plot(episode_ax,  self.mean_abs_error_v2, label = 'MSE 2: {}'.format(np.round(np.mean(error_v_2),2)))
-        ax.set_xlabel('Episode')
-        
-        ax.set_title('MSE value functions n = {} '.format(t0))
-        ax.legend()
-        
+        episode_ax = self.dashboard_num * np.linspace(1,len(self.mean_abs_error_P), len(self.mean_abs_error_P))
 
-        ax = fig.add_subplot(2, 4, 7)
-        
-        #ax.scatter(episode_ax, self.mean_abs_error_P_x_0, label = 'MAE policy approximation x = 0: {}'.format(np.round(np.mean(error_P_x_0),2)))
-        ax.plot(episode_ax, self.mean_abs_error_P_x_0, label = 'MSE: {}'.format(np.round(np.mean(error_P_x_0),2)))
-        ax.set_xlim([0,self.num_episodes])
-        ax.set_title('MSE policy function x = 0 n = {} '.format(t0))
-        ax.legend()
-        ax.set_xlabel('Episode')
-        
+        #ax[1][1].scatter(episode_ax,  self.mean_abs_error_v1, label = 'MSE 1: {}'.format(np.round(np.mean(error_v_1),2)))
+        #ax[1][1].scatter(episode_ax,  self.mean_abs_error_v2, label = 'MSE 2: {}'.format(np.round(np.mean(error_v_2),2)))
+        ax[1][1].plot(episode_ax,  self.mean_abs_error_v1, label = 'MSE 1: {}'.format(np.round(np.mean(error_v_1),4)))
+        ax[1][1].plot(episode_ax,  self.mean_abs_error_v2, label = 'MSE 2: {}'.format(np.round(np.mean(error_v_2),4)))
 
-        ax = fig.add_subplot(2, 4, 8)
-        
-        #ax.scatter(episode_ax, self.mean_abs_error_P_y_0, label = 'MAE policy approximation y = 0: {}'.format(np.round(np.mean(error_P_y_0),2)))
-        ax.plot(episode_ax, self.mean_abs_error_P_y_0, label = 'MAE: {}'.format(np.round(np.mean(error_P_y_0),2)))
+        ax[1][1].set_title('MSE value function n = {} '.format(t0+1))
+        ax[1][1].legend()
+        ax[1][1].set_xlim([0,self.num_episodes])
+        ax[1][1].set_xlabel('Episode')
+       
 
-        ax.set_title('MSE policy function y = 0 n = {} '.format(t0))
-        ax.set_xlim([0,self.num_episodes])
-        ax.set_xlabel('Episode')
-        ax.legend()
- 
+        #ax[1][2].scatter(episode_ax, self.mean_abs_error_P, label = 'MSE: {}'.format(np.round(np.mean(error_P),2)))
+        ax[1][2].plot(episode_ax, self.mean_abs_error_P, label = 'MSE: {}'.format(np.round(np.mean(error_P),4)))
 
-        #terminal value function
+        ax[1][2].set_title('MSE policy function x = 0 ')
+        ax[1][2].legend()
+        ax[1][2].set_xlim([0,self.num_episodes])
+        ax[1][2].set_xlabel('Episode')
+        # terminal value function
         for ix in range(n_x):
-            for iy in range(n_x):
-                state = np.array([(self.N-1),x_space[ix], y_space[iy]])
-                action = self.AC.actor(tf.expand_dims(tf.convert_to_tensor(state),0))
-                
-                P[ix] = action
+           state = np.array([self.N-1,state_space[ix]])
+           action = self.AC.actor(tf.expand_dims(tf.convert_to_tensor(state),0))
+          
+          
 
-                v1,v2 = self.AC.critic_1([tf.expand_dims(tf.convert_to_tensor(state),0),action]), self.AC.critic_2([tf.expand_dims(tf.convert_to_tensor(state),0),action])
-                
-                V1[ix][iy] = v1
-                
-                V2[ix][iy] = v2
+           v1,v2 = self.AC.critic_1([tf.expand_dims(tf.convert_to_tensor(state),0),action]), self.AC.critic_2([tf.expand_dims(tf.convert_to_tensor(state),0),action])
+           
+           V1[ix] = v1
+          
+           V2[ix] = v2
+
+           V_true[ix] = self.value_fct(state_space[ix], self.dt*self.N-1)
+
+          
+        ax[1][0].plot(state_space, V1, label = 'approx value function 1')
+        ax[1][0].plot(state_space, V2,label = 'approx value function 1')
+        ax[1][0].plot(state_space, V_true, label = 'true value function', color = 'black')
         
-        ax = fig.add_subplot(2, 4, 5, projection = '3d')
-        ax.plot_surface(X,Y, V1, label = 'approx value function 1')
-        ax.plot_surface(X,Y, V2,label = 'approx value function 1')
-        ax.plot_surface(X,Y, V_t[self.N-1], label = 'true value function', color = 'black', alpha = 0.4)
-        ax.set_xlabel('x')
-        ax.set_ylabel('y')
-        ax.set_title('terminal value function n = {}'.format(self.N))
-        
+        ax[1][0].set_title('terminal value function n = {}'.format(self.N))
+        ax[1][0].set_xlabel('x')
         fig.set_size_inches(w = 18, h= 8)
         fig.tight_layout()
         plt.subplots_adjust(wspace=0.15, hspace=0.3)
-        fig.savefig('.\Bilder_SOC\LQR_TD3_Episode_{}'.format(len(avg_reward_list)))
-        #plt.show()
+        fig.savefig('.\Bilder_Episoden\OU_TD3_Dashboard_Episode_{}'.format(len(avg_reward_list)))
+        
     
+
 if __name__ == "__main__":
 
     lqr = CaseOne()
     n_x = 40
     
-    V_t,A_t,base = LQR.Solution_2_D(lqr).create_solution(n_x)
-    #V_t, A_t, base = LQR.Solution(lqr).dynamic_programming(n_x)
-    
-    lqr.run_episodes(n_x,V_t,A_t, base)
+    lqr.run_episodes(n_x)
     

@@ -69,7 +69,7 @@ class ActorCritic():
     def __init__(self, state_dim, action_dim, load_model):
 
         self.batch_size = 256
-        self.max_memory_size = 100000
+        self.max_memory_size = 1000000
 
         self.state_dim = state_dim
         self.action_dim = action_dim
@@ -77,8 +77,8 @@ class ActorCritic():
         self.gamma = 1
         self.tau = 0.001
         self.tau_actor = 0.001
-        self.lower_action_bound = -5
-        self.upper_action_bound = 5
+        self.lower_action_bound = -1
+        self.upper_action_bound = 1
 
         self.buffer = experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
 
@@ -248,9 +248,9 @@ class ActorCritic():
 
         input = tf.concat([state_input, action_input],1)
        
-        out_1 = layers.Dense(256, activation = 'relu')(input)
+        out_1 = layers.Dense(128, activation = 'relu')(input)
         out_1 = layers.BatchNormalization()(out_1)
-        out_1 = layers.Dense(256, activation = 'relu')(out_1)
+        out_1 = layers.Dense(128, activation = 'relu')(out_1)
        
         out_1 = layers.Dense(1, kernel_initializer= last_init)(out_1)
 
@@ -305,7 +305,7 @@ class CaseOne():
         # g(x) = D * ||x||^2
         self.D = 0*np.identity(2)
 
-        self.num_episodes = 6100
+        self.num_episodes = 5100
         self.warmup = 100
         self.state_dim = 2
         self.action_dim = 2
@@ -347,7 +347,7 @@ class CaseOne():
     def free_energy(self,x,y):
 
         r = np.linalg.norm(np.array([x,y]))
-        return np.log( ((np.log(self.r1) -np.log(r)) / (np.log(self.r1)-np.log(self.r2))) + 10e-4)
+        return np.log( ((np.log(self.r1) -np.log(r)) / (np.log(self.r1)-np.log(self.r2))) + 10e-2)
     
     def start_state(self):
         r1 = self.r1 + self.dt
@@ -360,12 +360,15 @@ class CaseOne():
         return X
 
     def check_if_done(self,n,x):
+        norm = np.linalg.norm(x)
       
         if n == self.N-1:
-            return True, None
+            if ( self.r2 <= norm):
+                    return True, 'exit_C'
+            else:
+                return True, None
         else:
-            norm = np.linalg.norm(x)
-          
+             
             if ( norm <= self.r1) or (self.r2 <= norm):
                 if ( norm <= self.r1):
                     return True, None
@@ -424,11 +427,12 @@ class CaseOne():
                     
                         X[n+1] =  (X[n] + action_env) + self.sig*np.random.normal(size = 2)
                     else:
-                        X[n+1] =  X[n] + action_env*self.dt + self.sig*np.sqrt(self.dt)  * np.random.normal(size = 2)
+                        X[n+1] =  X[n] + self.dt*action_env + self.sig*np.sqrt(self.dt) * np.random.normal(size = 2)
                     new_state = np.array([X[n+1][0],X[n+1][1]], np.float32)
                     new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
                 
-                self.AC.buffer.record((state.numpy()[0],action_.numpy(),reward, new_state.numpy()[0], done))
+
+                self.AC.buffer.record((state.numpy()[0],action_.numpy()[0],reward, new_state.numpy()[0], done))
                
                 episodic_reward += reward
                 # warm up
@@ -484,7 +488,9 @@ class CaseOne():
                 state = tf.expand_dims(tf.convert_to_tensor(state),0)
                 
                
-                action_env = AC.upper_action_bound*mu
+                 
+                action_ = tf.tanh(mu)
+                action_env = self.AC.upper_action_bound*action_[0]
                 if (done):
                     print('done')      
                 else:
@@ -521,7 +527,7 @@ class CaseOne():
             self.old_V1 = np.zeros((n_x,n_x))
             self.old_V2 = np.zeros((n_x,n_x))
 
-        self.run_simulation(10, avg_reward_list,AC)
+        #self.run_simulation(10, avg_reward_list,AC)
         x_space = np.linspace(-self.r2,self.r2, n_x)
         one_ind = int(np.where(x_space == 1)[0][0])
         
@@ -570,15 +576,15 @@ class CaseOne():
             for iy in range(n_x):
                 state = np.array([x_space[ix],y_space[iy]])
                 mu, std = self.AC.actor(tf.expand_dims(tf.convert_to_tensor(state),0))
-
+            
                 
-                
-                action = self.AC.upper_action_bound*mu
+                action_ = tf.tanh(mu)
+                action = self.AC.upper_action_bound*action_
                 
                 
                 P[ix][iy] = action[0]
 
-                v1,v2 = self.AC.critic_1([tf.expand_dims(tf.convert_to_tensor(state),0),mu]),self.AC.critic_2([tf.expand_dims(tf.convert_to_tensor(state),0),mu])
+                v1,v2 = self.AC.critic_1([tf.expand_dims(tf.convert_to_tensor(state),0),action_]),self.AC.critic_2([tf.expand_dims(tf.convert_to_tensor(state),0),action_])
                 
                 V1[ix][iy] = v1
                 
@@ -633,7 +639,8 @@ class CaseOne():
                 mu, std = self.AC.actor(tf.expand_dims(tf.convert_to_tensor(state),0))
 
             
-                action = self.AC.upper_action_bound*mu
+                action_ = tf.tanh(mu)
+                action = self.AC.upper_action_bound*action_
               
                 
                 policy_x2[ix][iy] = action[0][1]
@@ -676,10 +683,11 @@ class CaseOne():
 
             
             
-            action = self.AC.upper_action_bound*mu
+            action_ = tf.tanh(mu)
+            action = self.AC.upper_action_bound*action_
            
-            free_energy_approx_1[i] = AC.critic_1([state,mu]).numpy()[0]
-            free_energy_approx_2[i] = AC.critic_2([state,mu]).numpy()[0]
+            free_energy_approx_1[i] = AC.critic_1([state,action_]).numpy()[0]
+            free_energy_approx_2[i] = AC.critic_2([state,action_]).numpy()[0]
         
         ax = fig.add_subplot(2, 3, 5)
  
@@ -705,7 +713,7 @@ class CaseOne():
         fig.set_size_inches(w = 15, h= 8)
         fig.tight_layout()
         plt.subplots_adjust(wspace=0.15, hspace=0.2)
-        fig.savefig('.\Bilder_SOC\TD3_Committor_Episode_{}'.format(len(avg_reward_list)))
+        fig.savefig('.\Bilder_SOC\SAC_Committor_Episode_{}'.format(len(avg_reward_list)))
         #plt.show()    
    
     
