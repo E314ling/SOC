@@ -44,8 +44,8 @@ class ActorCritic():
 
     def __init__(self, state_dim, action_dim, load_model):
 
-        self.batch_size = 256
-        self.max_memory_size = 100000
+        self.batch_size = 512
+        self.max_memory_size = 1000000
 
         self.state_dim = state_dim
         self.action_dim = action_dim
@@ -53,8 +53,8 @@ class ActorCritic():
         self.gamma = 1
         self.tau = 0.001
         self.tau_actor = 0.001
-        self.lower_action_bound = -5
-        self.upper_action_bound = 5
+        self.lower_action_bound = -1
+        self.upper_action_bound = 1
 
         self.buffer = experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
 
@@ -79,8 +79,6 @@ class ActorCritic():
             self.target_critic_2 = self.get_critic_NN()
             #self.target_critic_2.set_weights(self.critic_2.get_weights())
 
-           
-            
             self.actor = self.get_actor_NN()
             self.target_actor = self.get_actor_NN()
             self.target_actor.set_weights(self.actor.get_weights())
@@ -280,8 +278,8 @@ class CaseOne():
         # g(x) = D * ||x||^2
         self.D = 0*np.identity(2)
 
-        self.num_episodes = 11000
-        self.warmup = 1000
+        self.num_episodes = 5100
+        self.warmup = 100
         self.state_dim = 2
         self.action_dim = 2
         self.AC = ActorCritic(self.state_dim, self.action_dim, False)
@@ -311,7 +309,7 @@ class CaseOne():
             return 0.5*self.dt*np.linalg.norm(a)**2
 
     def g(self, n,x, exit_C):
-        eps = 10e-4
+        eps = 10e-12
         if (exit_C):
             const = 1
         else:
@@ -322,7 +320,7 @@ class CaseOne():
     def free_energy(self,x,y):
 
         r = np.linalg.norm(np.array([x,y]))
-        return -np.log( ((np.log(self.r1) -np.log(r)) / (np.log(self.r1)-np.log(self.r2))) + 10e-4)
+        return -np.log( ((np.log(self.r1) -np.log(r)) / (np.log(self.r1)-np.log(self.r2))) + 10e-12)
 
     def start_state(self):
         r1 = self.r1 + self.dt
@@ -379,7 +377,7 @@ class CaseOne():
                 state = tf.expand_dims(tf.convert_to_tensor(state),0)
                 
                 if (ep <= self.warmup):
-                    action = tf.convert_to_tensor(2*np.random.rand(self.state_dim) -1)
+                    action = 2*np.random.rand(self.state_dim) -1
                     action_env = self.AC.upper_action_bound * action
                 else:
                     action = self.AC.policy(state).numpy()[0]
@@ -402,12 +400,11 @@ class CaseOne():
                     
                         X[n+1] =  (X[n] + action_env) + self.sig*np.random.normal(2)
                     else:
-                        X[n+1] =  X[n] + action_env*self.dt + self.sig*np.sqrt(self.dt)  * np.random.normal(size = 2)
+                        X[n+1] =  X[n] +self.dt*action_env + self.sig*np.sqrt(self.dt)  * np.random.normal(size = 2)
                     new_state = np.array([X[n+1][0],X[n+1][1]], np.float32)
                    
                     new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
-                
-                
+               
                 self.AC.buffer.record((state.numpy()[0],action,reward, new_state.numpy()[0], done))
                 
                 episodic_reward += reward
