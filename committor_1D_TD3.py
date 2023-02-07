@@ -268,26 +268,27 @@ class CaseOne():
 
     def __init__(self):
         # dX_t = (A X_t + B u_t) dt + sig * dB_t
-        self.A = 0*np.identity(2)
-        self.B = np.identity(2)
+        self.A = 0
+        self.B = 1
         self.sig = 1
 
         # f(x,u) = f_A ||x||^2 + f_B ||u||^2
         self.discrete_problem = False
-        self.f_A = 0*np.identity(2)
-        self.f_B = np.identity(2)
+        self.f_A = 0
+        self.f_B = 1
 
         # g(x) = D * ||x||^2
-        self.D = 0*np.identity(2)
+        self.D = 0
 
         self.num_episodes = 5100
         self.warmup = 100
-        self.state_dim = 2
-        self.action_dim = 2
+        self.state_dim = 1
+        self.action_dim = 1
         self.AC = ActorCritic(self.state_dim, self.action_dim, False)
 
         self.T = 1
         self.N = 50
+        self.max_steps = 1000
         self.dt = self.T / self.N
 
         self.r1 = 1
@@ -301,14 +302,8 @@ class CaseOne():
         
     def f(self, n,x,a):
 
-        y1= np.dot(np.transpose(x), self.f_A)
-        
-        y2 = np.dot(np.transpose(a), self.f_B)
-
-        if (self.discrete_problem):
-            return np.float32(np.dot(y1,x) + np.dot(y2,a))
-        else:
-            return 0.5*self.dt*np.linalg.norm(a)**2
+       
+        return 0.5*self.dt*a**2
 
     def g(self, n,x, exit_C):
         eps = 10e-4
@@ -319,37 +314,27 @@ class CaseOne():
         
         return -np.log(const + eps)
     
-    def free_energy(self,x,y):
+    def free_energy(self,x):
 
-        r = np.linalg.norm(np.array([x,y]))
-        return -np.log( ((np.log(self.r1) -np.log(r)) / (np.log(self.r1)-np.log(self.r2))) + 10e-4)
+        r = abs(x)
+        return -np.log(((self.r1 - r) / (self.r1 -self.r2)) + 10e-4 )
 
-    def opt_control(self, x,y):
-        r = np.linalg.norm(np.array([x,y]))
-
-        # Ax = x/(( ((np.log(self.r1) - 0.5*np.log(x**2 + y**2)) / (np.log(self.r1)-np.log(self.r2))) + 10e-4)*((x**2 +y**2)*(np.log(self.r1)-np.log(self.r2))))
-        # Ay = y/(( ((np.log(self.r1) - 0.5*np.log(x**2 + y**2)) / (np.log(self.r1)-np.log(self.r2))) + 10e-4)*((x**2 +y**2)*(np.log(self.r1)-np.log(self.r2))))
-        # return -self.sig*np.array([Ax,Ay])
-
-        A = ((np.log(self.r1) -np.log(self.r2))* r*(((np.log(self.r1) -np.log(r)) / (np.log(self.r1)-np.log(self.r2))) + 10e-4))
-        u = x/np.sqrt(x**2 + y**2)
-        v = y/np.sqrt(x**2 + y**2)
-        
-        return -self.sig*A*np.array([u,v])
+    
+      
     def start_state(self):
         r1 = self.r1 + self.dt
         r2 = self.r2 - self.dt
         start_r = (r2 -r1)* np.random.rand() + r1
-        random_pi = 2*np.pi *np.random.rand()
         
-        X = np.array([start_r*np.cos(random_pi),start_r*np.sin(random_pi)])
+        
+        X = start_r
 
         return X
         
 
     def check_if_done(self,n,x):
       
-        if n == self.N-1:
+        if n == self.max_steps:
             return True, None
         else:
             norm = np.linalg.norm(x)
@@ -362,63 +347,16 @@ class CaseOne():
             
             else:
                 return False, None
-    def get_baseline(self):
-
-        num_sim = 500
-        reward_arr = np.zeros(num_sim)
-        stopping_arr = np.zeros(num_sim)
-
-        for i_sim in range(num_sim):
-            X = np.zeros((self.N,self.state_dim), dtype= np.float32)
-            X[0] = self.start_state()
-            episodic_reward = 0
-            n = 0
-            while(True):
-                state = np.array([X[n][0],X[n][1]], np.float32)
-                state = tf.expand_dims(tf.convert_to_tensor(state),0)
-                
-                done, exits = self.check_if_done(n,state)
-                if (exits == 'exit_C'):
-                    exit_C = True
-                else:
-                    exit_C = False
-                
-                
-                action_env = self.opt_control(X[n][0], X[n][1])
-
-                if (done):
-                    reward = self.g(n,X[n], exit_C)
-                    
-                    X = np.zeros((self.N,self.state_dim), dtype= np.float32)
-                    X[0] = self.start_state()
-                    new_state = np.array([X[0][0],X[0][1]], np.float32)
-                    new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
-                         
-                else:
-
-                    reward = self.f(n,X[n], action_env)
-                    
-                    X[n+1] =  X[n] + action_env*self.dt + self.sig*np.sqrt(self.dt)  * np.random.normal(size = 2)
-                    
-                     
-                episodic_reward += reward
-
-                if(done):
-                    reward_arr[i_sim] = episodic_reward
-                    stopping_arr[i_sim] = self.dt*(n+ 0.5)
-                    break
-                else:
-                    n += 1
-        return np.mean(reward_arr),  np.mean(stopping_arr)
+   
 
     def run_episodes(self, n_x):
-        base, base_st = self.get_baseline()
+        
         ep_reward_list = []
         stopping_time_list = []
         # To store average reward history of last few episodes
         avg_reward_list = []
         avg_stopping_list = []
-        X = np.zeros((self.N,2), dtype= np.float32)
+        X = np.zeros(self.max_steps, dtype= np.float32)
         
         X[0] = self.start_state()
         
@@ -429,7 +367,7 @@ class CaseOne():
             episodic_reward = 0
             while(True):
                 
-                state = np.array([X[n][0],X[n][1]], np.float32)
+                state = np.array([X[n]], np.float32)
                 
                 done, exits = self.check_if_done(n,state)
 
@@ -448,10 +386,10 @@ class CaseOne():
                 if (done):
                     reward = self.g(n,X[n], exit_C)
                     
-                    X = np.zeros((self.N,2), dtype= np.float32)
+                    X = np.zeros(self.max_steps, dtype= np.float32)
                     X[0] = self.start_state()
                     
-                    new_state = np.array([X[0][0],X[0][1]], np.float32)
+                    new_state = np.array([X[0]], np.float32)
                     new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
                          
                 else:
@@ -461,10 +399,10 @@ class CaseOne():
                     
                     if (self.discrete_problem):
                     
-                        X[n+1] =  (X[n] + action_env) + self.sig*np.random.normal(2)
+                        X[n+1] =  (X[n] + action_env) + self.sig*np.random.normal()
                     else:
-                        X[n+1] =  X[n] + action_env*self.dt + self.sig*np.sqrt(self.dt)  * np.random.normal(size = 2)
-                    new_state = np.array([X[n+1][0],X[n+1][1]], np.float32)
+                        X[n+1] =  X[n] + action_env*self.dt + self.sig*np.sqrt(self.dt)  * np.random.normal()
+                    new_state = np.array([X[n+1]], np.float32)
                    
                     new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
                 
@@ -492,9 +430,9 @@ class CaseOne():
                 else:
                     n += 1
             if (ep == 0):
-                self.dashboard(n_x,avg_reward_list,avg_stopping_list,self.AC,base, base_st)
+                self.dashboard(n_x,avg_reward_list,avg_stopping_list,self.AC)
             if (ep % self.dashboard_num == 0 and ep >100):
-                self.dashboard(n_x,avg_reward_list,avg_stopping_list,self.AC,base, base_st)
+                self.dashboard(n_x,avg_reward_list,avg_stopping_list,self.AC)
             
             if (ep >= self.warmup):
                 
@@ -506,78 +444,28 @@ class CaseOne():
         # Plotting graph
         # Episodes versus Avg. Rewards
         self.AC.save_model()
-        self.dashboard(n_x,avg_reward_list,avg_stopping_list,self.AC,base, base_st)
+        self.dashboard(n_x,avg_reward_list,avg_stopping_list,self.AC)
     
-    def run_simulation(self, num_sim,avg_reward_list,AC:ActorCritic):
-        fig = plt.figure(figsize= (6,6))
-        for sim in range(num_sim):
-            X = np.zeros((self.N,2), dtype= np.float32)
-            x,y = np.zeros(self.N, dtype= np.float32), np.zeros(self.N, dtype= np.float32)
-            X[0] = self.start_state()
-            n = 0
-            while(True):
-                x[n] = X[n][0]
-                y[n] = X[n][1]
-                state = np.array([X[n][0],X[n][1]], np.float32)
-                done, exits = self.check_if_done(n,state)
-
-             
-                state = tf.expand_dims(tf.convert_to_tensor(state),0)
-                
-                action = self.AC.actor(state).numpy()[0]
-                action_env = AC.upper_action_bound*action
-                if (done):
-                    print('done')      
-                else:
-
-                    if (self.discrete_problem):
-                    
-                        X[n+1] =  (X[n] + action) + self.sig*np.random.normal(size=2)
-                    else:
-                        X[n+1] =  X[n] + (np.dot(self.A,X[n]) + np.dot(self.B,action_env))*self.dt + self.sig*np.sqrt(self.dt)  * np.random.normal(size = 2)
-                    
-                if(done):
-                    x[n:] = x[n]
-                    y[n:] = y[n]
-                    break
-                else:
-                    n += 1
-               
-            plt.plot(x, y)
-        time = np.linspace(0,2*np.pi,100)
-        circ_x_1 = self.r1*np.cos(time)
-        circ_y_1 = self.r1*np.sin(time)
-        plt.plot(circ_x_1, circ_y_1, color = 'black')
-        plt.title('simulation episode {}'.format(len(avg_reward_list)))
-
-        circ_x_2 = self.r2*np.cos(time)
-        circ_y_2 = self.r2*np.sin(time)
-        plt.plot(circ_x_2, circ_y_2, color = 'black')
-        fig.savefig('.\Bilder_SOC\Sim_Balls_Committor_Episode_{}'.format(len(avg_reward_list)))
-        #plt.show()
+   
             
-    def dashboard(self,n_x,avg_reward_list, avg_stopping_list,AC: ActorCritic,base, base_st):
+    def dashboard(self,n_x,avg_reward_list, avg_stopping_list,AC: ActorCritic):
         if (len(self.change_V1) == 0):
             self.old_V1 = np.zeros((n_x,n_x))
             self.old_V2 = np.zeros((n_x,n_x))
 
-        self.run_simulation(10, avg_reward_list,AC)
-        x_space = np.linspace(-self.r2,self.r2, n_x)
-        one_ind = int(np.where(x_space == 1)[0][0])
-        
-        minus_one_ind = int(np.where(x_space == -1)[0][0]) +1 
-        y_space = np.linspace(-self.r2,self.r2, n_x)
-
+       
+        x_space = np.linspace(self.r1,self.r2, n_x)
+      
         fig = plt.figure()
         
-        V1 = np.zeros((n_x,n_x))
-        P = np.zeros((n_x,n_x,2))
+        V1 = np.zeros(n_x)
+        P = np.zeros(n_x)
     
-        V2 = np.zeros((n_x,n_x))
+        V2 = np.zeros(n_x)
         t0 = 1
-        V_true = np.zeros((n_x,n_x))
+        V_true = np.zeros(n_x)
 
-        ax = fig.add_subplot(2, 3, 1)
+        ax = fig.add_subplot(1, 3, 1)
         if (len(avg_reward_list)> 0):
             ax.plot(avg_reward_list, label = 'Avg Reward: {}'.format(np.round(avg_reward_list[-1],2)))
         else:
@@ -585,11 +473,11 @@ class CaseOne():
         ax.set_xlim([0,self.num_episodes-100])
         ax.set_xlabel('Episode')
         ax.set_title('Avg. Epsiodic Reward')
-        ax.hlines(base,xmin = 0, xmax = self.num_episodes, color = 'black', label = 'base: {}'.format(np.round(base,2)))
+      
        
         ax.legend()
 
-        ax = fig.add_subplot(2, 3, 2)
+        ax = fig.add_subplot(1, 3, 2)
         if (len(avg_stopping_list) > 0):
             ax.plot(avg_stopping_list, label = 'Avg stopping time: {}'.format(np.round(avg_stopping_list[-1],2)))
         else:
@@ -597,7 +485,7 @@ class CaseOne():
         ax.set_xlabel('Episode')
         ax.set_xlim([0,self.num_episodes-100])
         ax.set_title('Avg. Stopping Time')
-        ax.hlines(base_st,xmin = 0, xmax = self.num_episodes, color = 'black', label = 'base: {}'.format(np.round(base_st,2)))
+        
         ax.legend()
         
         
@@ -611,26 +499,23 @@ class CaseOne():
     
 
         for ix in range(n_x):
-            for iy in range(n_x):
-                state = np.array([x_space[ix],y_space[iy]])
+          
+                state = np.array([x_space[ix]])
                 action = self.AC.actor(tf.expand_dims(tf.convert_to_tensor(state),0))
                 
-                P[ix][iy] = AC.upper_action_bound*action[0]
+               
 
                 v1,v2 = self.AC.critic_1([tf.expand_dims(tf.convert_to_tensor(state),0),action]),self.AC.critic_2([tf.expand_dims(tf.convert_to_tensor(state),0),action])
                 
-                V1[ix][iy] = v1
+                V1[ix] = v1
                 
-                V2[ix][iy] = v2
+                V2[ix] = v2
 
                 if (np.linalg.norm(state)< 1):
-                    V_true[ix][iy] = np.nan
+                    V_true[ix] = np.nan
                 else:
-                    V_true[ix][iy] = self.free_energy(x_space[ix],y_space[iy])
-              
-                policy_x[ix][iy] = AC.upper_action_bound*action[0][0]
-                opt_policy_x[ix][iy] = self.opt_control(x_space[ix], y_space[iy])[0]
-                policy_y[ix][iy] = AC.upper_action_bound*action[0][1]
+                    V_true[ix] = self.free_energy(x_space[ix])
+             
 
         change_V1 = (self.old_V1 - V1)**2
         change_V2 = (self.old_V2 - V2)**2
@@ -642,100 +527,11 @@ class CaseOne():
         self.old_V2 = V2
        
         
+        ax = fig.add_subplot(1, 3, 3)
 
-        X,Y = np.meshgrid(x_space, y_space)
-
-        # ax = fig.add_subplot(2, 3, 3)
-        # ep_axis = np.linspace(0,len(avg_reward_list), len(self.change_V1))
-        # if (len(AC.critic_1_loss) != 0):
-        #     ax.plot(np.array(AC.critic_1_loss), label = 'critic loss 1: {}'.format(AC.critic_1_loss[-1]))
-        #     ax.plot(AC.critic_2_loss,  label = 'critic loss 2: {}'.format(AC.critic_2_loss[-1]))
-
-        # ax.set_xlabel('Training steps')
-      
-        # #ax.set_xlim([0,self.num_episodes])
-        # ax.set_title('critic losses')
-        # ax.legend()
-        
-        ax = fig.add_subplot(2,3,3)
-         # for y axis poilcy
-        policy_x2 = np.zeros((20,20))
-        policy_y2 = np.zeros((20,20))
-        x_space2 = np.linspace(-self.r2,self.r2, 20)
-        y_space2 = np.linspace(-self.r2,self.r2, 20)
-        X2,Y2 = np.meshgrid(x_space2, y_space2)
-        # for x axis poilcy
-        
-        opt_policy_x2 = np.zeros((20,20))
-        opt_policy_y2 = np.zeros((20,20))
-        for ix in range(20):
-            for iy in range(20):
-                state = np.array([x_space2[ix],y_space2[iy]])
-                action = self.AC.actor(tf.expand_dims(tf.convert_to_tensor(state),0))
-                opt_action = self.opt_control(x_space2[ix],y_space2[iy])
-                policy_x2[iy][ix] = AC.upper_action_bound*action[0][0]
-                    
-                policy_y2[iy][ix] = AC.upper_action_bound*action[0][1]
-                opt_policy_x2[iy][ix] = opt_action[0]
-                opt_policy_y2[iy][ix] = opt_action[1]
-       
-        ax.quiver(X2,Y2, policy_x2, policy_y2, color = 'blue')
-        ax.quiver(X2,Y2, opt_policy_x2, opt_policy_y2, color = 'black', alpha = 0.4)
-        
-        time = np.linspace(0,2*np.pi,100)
-        circ_x_1 = self.r1*np.cos(time)
-        circ_y_1 = self.r1*np.sin(time)
-        ax.plot(circ_x_1, circ_y_1, color = 'black')
-        ax.set_xlabel('x')
-        ax.set_ylabel('y')
-
-        circ_x_2 = self.r2*np.cos(time)
-        circ_y_2 = self.r2*np.sin(time)
-        ax.plot(circ_x_2, circ_y_2, color = 'black')
-        ax.set_xlim(-3,3)
-        ax.set_ylim(-3,3)
-       
-        ax.set_title('policy function vector field')
-        
-        ax = fig.add_subplot(2, 3, 4, projection = '3d')
-
-        #ax.set_zlim(AC.lower_action_bound, AC.upper_action_bound)
-        ax.plot_surface(X,Y, policy_x, label = 'policy function approximation x-direction')# vmin = AC.lower_action_bound, vmax = AC.upper_action_bound
-        ax.plot_surface(X,Y, opt_policy_x, label = 'policy function approximation x-direction',color = 'black',lw=0.5, rstride=1, cstride=1, alpha=0.4)
-        #ax.contour(X,Y,policy_x, levels = 9,lw=2, cmap = 'viridis', offset = AC.lower_action_bound, linestyles="solid", vmin = AC.lower_action_bound, vmax = AC.upper_action_bound)
-        #ax.contour(X, Y, policy_x, 10, lw=0.5, colors="k", linestyles="solid")
-        ax.set_title('policy function x-direction')
-        ax.set_xlabel('x')
-        ax.set_ylabel('y')
-        
-        free_x = np.linspace(self.r1, self.r2, 30)
-        y = 0
-        free_energy =  np.zeros(30)
-        free_energy_approx_1 = np.zeros(30)
-        free_energy_approx_2 = np.zeros(30)
-        for i in range(30):
-            free_energy[i] = self.free_energy(free_x[i], y)
-            state = np.array([free_x[i],y])
-            state = tf.expand_dims(tf.convert_to_tensor(state),0)
-            action = self.AC.actor(state)
-            free_energy_approx_1[i] = AC.critic_1([state,action]).numpy()[0]
-            free_energy_approx_2[i] = AC.critic_2([state,action]).numpy()[0]
-        
-        ax = fig.add_subplot(2, 3, 5)
-        
-        ax.plot(free_x,free_energy, label = 'free energy y = 0', color = 'black')
-        ax.plot(free_x,free_energy_approx_1, label = 'free energy approx 1')
-        ax.plot(free_x,free_energy_approx_2, label = 'free energy approx 2')
-        ax.set_xlabel('x')
-        
-        ax.set_title('free energy')
-       
-
-        ax = fig.add_subplot(2, 3, 6, projection = '3d')
-
-        ax.plot_surface(X,Y, V_true, label = 'value function', color = 'black', alpha = 0.4)
-        ax.plot_surface(X,Y, V1, label = 'approx value function 1')
-        ax.plot_surface(X,Y, V2, label = 'approx value function 2')
+        ax.plot(x_space, V_true, label = 'value function', color = 'black', alpha = 0.4)
+        ax.plot(x_space, V1, label = 'approx value function 1')
+        ax.plot(x_space, V2, label = 'approx value function 2')
         ax.set_xlabel('x')
         ax.set_ylabel('y')
      
@@ -743,10 +539,10 @@ class CaseOne():
         
         ax.set_title('value function')
   
-        fig.set_size_inches(w = 18, h= 8)
+        fig.set_size_inches(w = 18, h= 5)
         fig.tight_layout()
         plt.subplots_adjust(wspace=0.15, hspace=0.25)
-        fig.savefig('.\Bilder_SOC\TD3_Committor_Episode_{}'.format(len(avg_reward_list)))
+        fig.savefig('.\Bilder_SOC\Test_TD3_Committor_Episode_{}'.format(len(avg_reward_list)))
         #plt.show()
     
 
