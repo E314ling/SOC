@@ -4,31 +4,7 @@ from keras import layers, losses
 import numpy as np
 import matplotlib.pyplot as plt
 import linear_quadratic_regulator_DP as LQR
-class OUActionNoise:
-    def __init__(self, mean, std_deviation, theta=0.1, dt=1e-2, x_initial=None):
-        self.theta = theta
-        self.mean = mean
-        self.std_dev = std_deviation
-        self.dt = dt
-        self.x_initial = x_initial
-        self.reset()
 
-    def __call__(self):
-       
-        x = (
-            self.x_prev
-            + self.theta * (self.mean - self.x_prev) * self.dt
-            + self.std_dev * np.sqrt(self.dt) * np.random.normal(size=self.mean.shape)
-        )
-       
-        self.x_prev = x
-        return x
-
-    def reset(self):
-        if self.x_initial is not None:
-            self.x_prev = self.x_initial
-        else:
-            self.x_prev = np.zeros_like(self.mean)
 
 class experience_memory():
 
@@ -43,10 +19,10 @@ class experience_memory():
 
         # Instead of list of tuples as the exp.replay concept go
         # We use different np.arrays for each tuple element
-        self.state_buffer = np.zeros((self.buffer_capacity, state_dim+1), dtype=np.float32)
+        self.state_buffer = np.zeros((self.buffer_capacity, state_dim), dtype=np.float32)
         self.action_buffer = np.zeros((self.buffer_capacity, action_dim), dtype=np.float32)
         self.reward_buffer = np.zeros((self.buffer_capacity, 1), dtype=np.float32)
-        self.next_state_buffer = np.zeros((self.buffer_capacity, state_dim+1), dtype=np.float32)
+        self.next_state_buffer = np.zeros((self.buffer_capacity, state_dim), dtype=np.float32)
         self.done_buffer = np.zeros((self.buffer_capacity, 1), dtype=np.float32)
 
     # Takes (s,a,r,s') obervation tuple as input
@@ -107,7 +83,7 @@ class ActorCritic():
         self.actor_lr = 0.0001
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
       
-        self.var = 0.1
+        self.var = 0.2
         self.var_decay = 0
         self.lr_decay = 1
 
@@ -198,7 +174,7 @@ class ActorCritic():
         # input [state, action]
         last_init = tf.random_uniform_initializer(minval=-0.003, maxval=0.003)
 
-        state_input = layers.Input(shape =(self.state_dim+1,))
+        state_input = layers.Input(shape =(self.state_dim,))
         action_input = layers.Input(shape =(self.action_dim,))
 
         input = tf.concat([state_input, action_input],1)
@@ -224,7 +200,7 @@ class ActorCritic():
         # Initialize weights between -3e-3 and 3-e3
         last_init = tf.random_uniform_initializer(minval=-0.003, maxval=0.003)
 
-        inputs = layers.Input(shape=(self.state_dim+1,))
+        inputs = layers.Input(shape=(self.state_dim,))
        
         out = layers.Dense(128, activation="relu")(inputs)
         out = layers.BatchNormalization()(out)
@@ -273,7 +249,7 @@ class CaseOne():
         # g(x) = D * ||x||^2
         self.D = 1
 
-        self.num_episodes = 5100
+        self.num_episodes = 10010
         self.state_dim = 1
         self.action_dim = 2
         
@@ -289,21 +265,22 @@ class CaseOne():
         self.mean_abs_error_P = []
 
         
-        self.alpha = -2
+        self.p = 0.5
         self.r = 0.1
-        self.mu = self.r + 0.1*self.sig
-        self.gam = (0.5*(self.mu - self.r)**2 )/ (self.sig**2)
-        self.k = (self.alpha/(1-self.alpha))* (self.r + (self.gam/(1-self.alpha)))
+        self.mu = 0
+        self.beta = 0.99
+        self.lam = 0
+        self.gam = np.exp(-(self.beta + self.lam))
+        print('discount', self.gam)
+        self.AC.gamma = self.gam
+        self.warmup = 10
 
+        self.k = ((self.p /(1-self.p))*( 0.5*(((self.r -self.mu)**2) / ((self.sig**2) *(self.p-1))) - self.r + (self.beta + self.lam)/self.p )   )**(self.p-1)
+        print('K',self.k)
     def f(self, n,x,a):
         c = a[0]
-        return self.dt*((c**self.alpha)/self.alpha)
-        
-
-    def g(self, n,x):
-        return (x**self.alpha)/self.alpha
-    
-   
+        return self.dt*((c**self.p)/self.p)
+         
     def check_if_done(self,n,x):
         if n == self.N-1:
             return True
@@ -314,55 +291,45 @@ class CaseOne():
         ep_reward_list = []
         # To store average reward history of last few episodes
         avg_reward_list = []
-        X = np.zeros((self.N), dtype= np.float32)
-        X[0] = 2*np.random.rand() +0.5
+        wealth = []
+
+        # choose starting capital X0 > 0 
+        
         for ep in range(self.num_episodes):
             
-            n=0
-            episodic_reward = 0
-            while(True):
-                state = np.array([n,X[n]], np.float32)
+            state = 4*np.random.rand() + 0.5
+            n = 0
+
+            for _ in range(200):
+                state_tf = tf.expand_dims(tf.convert_to_tensor(state),0)
                 
-                state = tf.expand_dims(tf.convert_to_tensor(state),0)
-                
-                done = self.check_if_done(n,state)
-                
-                if (ep <= 100):
+                if (ep <= self.warmup):
                     action = 2* np.random.rand(2) -1
-                    action[0] = 0.5*(action[0] +1) + 10e-1
+                    action[0] = 0.5*(action[0] +1)
 
                     action_env = self.AC.upper_action_bound * action
                 else:
-                    action = self.AC.policy(state).numpy()[0]
-                    action[0] = 0.5*(action[0] +1) + 10e-1
+                    action = self.AC.policy(state_tf).numpy()[0]
+                    action[0] = 0.5*(action[0] +1)
                     action_env = self.AC.upper_action_bound*action
-
-                if (done):
-                    reward = self.g(n,X[n])
                     
-                    X = np.zeros((self.N), dtype= np.float32)
-                    X[0] = 2*np.random.rand() +0.5
-                    new_state = np.array([0,X[0]], np.float32)
-                    new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
-                         
+                reward = self.f(n,state, action_env)
+                c = action_env[0]
+                pi = action_env[1]
+                new_state =  state + state*(pi*self.mu + (1- pi)*self.r - c)*self.dt + self.sig*np.sqrt(self.dt)*pi*state  * np.random.normal()
+                if (new_state < 0):
+                    new_state = 0
+            
+                new_state_tf = tf.expand_dims(tf.convert_to_tensor(new_state),0)
+                
+                if (_ == 199):
+                    done = True
                 else:
-
-                    reward = self.f(n,X[n], action_env)
-                    c = action_env[0]
-                    pi = action_env[1]
-                    X[n+1] =  X[n] + (X[n]*(self.r +pi*(self.mu -self.r)) - c)*self.dt + self.sig*np.sqrt(self.dt)*pi*X[n]  * np.random.normal()
-                    if (X[n+1] <= 0):
-                        X[n+1] = 0.1
-                    new_state = np.array([n+1,X[n+1]], np.float32)
-                    new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
-               
+                    done = False
                 
-                
-                self.AC.buffer.record((state.numpy()[0],action,reward, new_state.numpy()[0], done))
-                 
-                episodic_reward += reward
-                
-                if (ep >= 100):
+                self.AC.buffer.record((state,action,reward, new_state, done))
+                    
+                if (ep >= self.warmup):
                     self.AC.learn(n)
                     
                     if (n % 2 == 0 and n != 0):
@@ -371,59 +338,36 @@ class CaseOne():
                         self.AC.update_lr()
                         self.AC.update_var()
 
-                if(done):
-                    break
-                else:
-                    n += 1
+                n += 1
+                state = new_state
 
             if (ep % self.dashboard_num == 0):
                 self.dashboard(n_x,avg_reward_list,self.AC)
             
-            if (ep >= 100):
+            if (ep >= self.warmup):
                 
-                ep_reward_list.append(episodic_reward)
+                ep_reward_list.append(reward)
                 # Mean of last 40 episodes
                 avg_reward = np.mean(ep_reward_list[-100:])
-                print("Episode * {} * Avg Reward is ==> {}, var ==> {}, actor_lr ==> {}".format(ep, avg_reward, self.AC.var, self.AC.actor_lr))
+                print("Episode * {} * Avg Reward is ==> {}, var ==> {}, actor_lr ==> {}, wealth ==> {}".format(ep, avg_reward, self.AC.var, self.AC.actor_lr, new_state))
                 avg_reward_list.append(avg_reward)
                 if (avg_reward == np.nan):
-                    print('done,reward,X[n], action, action_env', done,reward,X[n],action, action_env)
+                    print('done,reward,X[n], action, action_env', done,reward,state,action, action_env)
                 # warm up
         # Plotting graph
         # Episodes versus Avg. Rewards
         self.AC.save_model()
         self.dashboard(n_x,avg_reward_list,self.AC)
     
-    def H_f(self,x,t):
-        if (self.k == 0):
-            return 1 + self.T -t
-        else:
-            return np.exp(self.k *(self.T -t))
-    
-    def H_f_prime(self,x,t):
-        if (self.k == 0):
-            return -1
-        else:
-            return -self.k*np.exp(self.k *(self.T -t))
-    
-    def H_x(self,x,t):
-
-        return (self.H_f(x,t)**(1-self.alpha))*(x**(self.alpha-1))
-
-    def H_xx(self,x,t):
-        return (self.alpha -1) * (self.H_f(x,t)**(1-self.alpha))*(x**(self.alpha-2))
-    def H_t(self,x,t):
-        return (1- self.alpha)* self.H_f(x,t) *self.H_f_prime(x,t) * (x**(self.alpha)/ self.alpha)
-
-    def value_fct(self,x,t):
+    def value_fct(self,x):
         
-        return (self.H_f(x,t)**(1-self.alpha))* (x**(self.alpha)/ self.alpha)
+        return self.k* (x**(self.p)/ self.p)
 
-    def opt_cosumption(self, x,t):
-        return self.H_x(x,t)**(1/(self.alpha))
+    def opt_cosumption(self, x):
+        return self.k**(1/(self.p-1)) * x
     
-    def opt_invest(self, x,t):
-        return  -((self.mu -self.r)* (self.H_x(x,t) / self.H_xx(x,t)) )/self.sig**2
+    def opt_invest(self, x):
+        return  (self.r-self.mu)/ ((self.sig**2)* (self.p-1))
 
     def dashboard(self,n_x,avg_reward_list,AC:ActorCritic):
 
@@ -443,6 +387,7 @@ class CaseOne():
         t0 = 1
 
         ax[0][0].plot(avg_reward_list)
+        #ax[0][0].plot(wealth)
         ax[0][0].set_xlabel('Episode')
         ax[0][0].set_ylabel('Avg. Epsiodic Reward')
         ax[0][0].set_xlim([0,self.num_episodes])
@@ -451,7 +396,7 @@ class CaseOne():
             ax[0][0].set_title('Avg 100 Episodes: {}'.format( np.round(avg_reward_list[-1],2)))
 
         for ix in range(n_x):
-           state = np.array([t0,state_space[ix]])
+           state = np.array([state_space[ix]])
            action = self.AC.actor(tf.expand_dims(tf.convert_to_tensor(state),0))
           
            v1,v2 = self.AC.critic([tf.expand_dims(tf.convert_to_tensor(state),0),action])
@@ -460,11 +405,11 @@ class CaseOne():
           
            V2[ix] = v2
 
-           V_true[ix] = self.value_fct(state_space[ix], self.dt*t0)
+           V_true[ix] = self.value_fct(state_space[ix])
            P_consume[ix] = action[0]
            P_invest[ix] = action[1]
-           optimal_consume[ix] = self.opt_cosumption(state_space[ix], self.dt*t0)
-           optimal_invest[ix] = self.opt_invest(state_space[ix], self.dt*t0)
+           optimal_consume[ix] = self.opt_cosumption(state_space[ix])
+           optimal_invest[ix] = self.opt_invest(state_space[ix])
 
         error_v_1 = (V_true - V1)**2
         error_v_2 = (V_true - V2)**2
@@ -478,13 +423,13 @@ class CaseOne():
         ax[0][1].plot(state_space, V2,label = 'approx value function 1')
         ax[0][1].plot(state_space,V_true, label = 'true value function', color = 'black')
         
-        ax[0][1].set_title('value function t = {}'.format(t0))
+        ax[0][1].set_title('value function')
        
 
         ax[0][2].plot(state_space, P_consume, label = 'policy function approximation')
         ax[0][2].plot(state_space, optimal_consume,label = 'true policy function', color = 'black')
         
-        ax[0][2].set_title('consume_function function x = 0')
+        ax[0][2].set_title('consume_function function')
         
 
         ###########################################################
@@ -495,7 +440,7 @@ class CaseOne():
         ax[1][1].plot(episode_ax,  self.mean_abs_error_v1, label = 'MSE 1: {}'.format(np.round(np.mean(error_v_1),4)))
         ax[1][1].plot(episode_ax,  self.mean_abs_error_v2, label = 'MSE 2: {}'.format(np.round(np.mean(error_v_2),4)))
 
-        ax[1][1].set_title('MSE value function t = {} '.format(t0))
+        ax[1][1].set_title('MSE value function')
         ax[1][1].legend()
         ax[1][1].set_xlim([0,self.num_episodes])
 
