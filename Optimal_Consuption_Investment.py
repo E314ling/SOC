@@ -289,15 +289,17 @@ class CaseOne():
         self.mean_abs_error_P = []
 
         
-        self.alpha = -2
+        self.alpha = 0.5
+        self.lam = 0.2
+        self.beta = 0.9
         self.r = 0.1
-        self.mu = self.r + 0.1*self.sig
-        self.gam = (0.5*(self.mu - self.r)**2 )/ (self.sig**2)
-        self.k = (self.alpha/(1-self.alpha))* (self.r + (self.gam/(1-self.alpha)))
+        self.mu = 0
+        
+        self.k = ((self.alpha/(1-self.alpha))* (0.5*((self.r-self.mu)**2) / (self.sig**2 * (self.alpha -1))) - self.r + (self.beta + self.lam)/self.alpha )*(self.alpha -1)
 
     def f(self, n,x,a):
         c = a[0]
-        return self.dt*((c**self.alpha)/self.alpha)
+        return self.dt*(np.exp(-(self.beta + self.lam)*n*self.dt) * (c**self.alpha)/self.alpha)
         
 
     def g(self, n,x):
@@ -318,63 +320,52 @@ class CaseOne():
         X[0] = 2*np.random.rand() +0.5
         for ep in range(self.num_episodes):
             
-            n=0
+            
             episodic_reward = 0
-            while(True):
-                state = np.array([n,X[n]], np.float32)
-                
-                state = tf.expand_dims(tf.convert_to_tensor(state),0)
-                
-                done = self.check_if_done(n,state)
-                
-                if (ep <= 100):
-                    action = 2* np.random.rand(2) -1
-                    action[0] = 0.5*(action[0] +1) + 10e-1
+           
+            state = np.array([X[n]], np.float32)
+            
+            state = tf.expand_dims(tf.convert_to_tensor(state),0)
+            
+            
+            
+            if (ep <= 100):
+                action = 2* np.random.rand(2) -1
+                action[0] = 0.5*(action[0] +1) + 10e-1
 
-                    action_env = self.AC.upper_action_bound * action
-                else:
-                    action = self.AC.policy(state).numpy()[0]
-                    action[0] = 0.5*(action[0] +1) + 10e-1
-                    action_env = self.AC.upper_action_bound*action
+                action_env = self.AC.upper_action_bound * action
+            else:
+                action = self.AC.policy(state).numpy()[0]
+                action[0] = 0.5*(action[0] +1) + 10e-1
+                action_env = self.AC.upper_action_bound*action
 
-                if (done):
-                    reward = self.g(n,X[n])
-                    
-                    X = np.zeros((self.N), dtype= np.float32)
-                    X[0] = 2*np.random.rand() +0.5
-                    new_state = np.array([0,X[0]], np.float32)
-                    new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
-                         
-                else:
+            
+                        
+            
 
-                    reward = self.f(n,X[n], action_env)
-                    c = action_env[0]
-                    pi = action_env[1]
-                    X[n+1] =  X[n] + (X[n]*(self.r +pi*(self.mu -self.r)) - c)*self.dt + self.sig*np.sqrt(self.dt)*pi*X[n]  * np.random.normal()
-                    if (X[n+1] <= 0):
-                        X[n+1] = 0.1
-                    new_state = np.array([n+1,X[n+1]], np.float32)
-                    new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
+            reward = self.f(n,X[n], action_env)
+            c = action_env[0]
+            pi = action_env[1]
+            X[n+1] =  X[n] + (X[n]*(self.r +pi*(self.mu -self.r)) - c)*self.dt + self.sig*np.sqrt(self.dt)*pi*X[n]  * np.random.normal()
+            if (X[n+1] <= 0):
+                X[n+1] = 0.1
+            new_state = np.array([n+1,X[n+1]], np.float32)
+            new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
                
                 
                 
-                self.AC.buffer.record((state.numpy()[0],action,reward, new_state.numpy()[0], done))
-                 
-                episodic_reward += reward
+            self.AC.buffer.record((state.numpy()[0],action,reward, new_state.numpy()[0]))
                 
-                if (ep >= 100):
-                    self.AC.learn(n)
-                    
-                    if (n % 2 == 0 and n != 0):
-                        self.AC.update_target(self.AC.target_critic.variables, self.AC.critic.variables)
-                        self.AC.update_target(self.AC.target_actor.variables, self.AC.actor.variables)
-                        self.AC.update_lr()
-                        self.AC.update_var()
-
-                if(done):
-                    break
-                else:
-                    n += 1
+            episodic_reward += reward
+            
+            if (ep >= 100):
+                self.AC.learn(ep)
+                
+                if (ep % 2 == 0 and ep != 0):
+                    self.AC.update_target(self.AC.target_critic.variables, self.AC.critic.variables)
+                    self.AC.update_target(self.AC.target_actor.variables, self.AC.actor.variables)
+                    self.AC.update_lr()
+                    self.AC.update_var()
 
             if (ep % self.dashboard_num == 0):
                 self.dashboard(n_x,avg_reward_list,self.AC)
