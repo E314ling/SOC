@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 class Solution_2_D():
 
     def __init__(self,case_obj):
-        
+        self.obj = case_obj
        # dX_t = (A X_t + B u_t) dt + sig * dB_t
         self.dt = case_obj.dt
         self.sig = case_obj.sig
@@ -164,6 +164,7 @@ class Solution_2_D():
         
         print('optimal_cost', optimal_cost)
         print(np.mean(cum_cost))
+        self.obj.P_t, self.obj.Q_t = self.P_t, self.Q_t
         return self.V, self.poli, np.mean(cum_cost)
 
     def state_to_dicrete(self, state):

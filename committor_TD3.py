@@ -53,8 +53,8 @@ class ActorCritic():
         self.gamma = 1
         self.tau = 0.001
         self.tau_actor = 0.001
-        self.lower_action_bound = -1
-        self.upper_action_bound = 1
+        self.lower_action_bound = -4
+        self.upper_action_bound = 4
 
         self.buffer = experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
 
@@ -285,7 +285,7 @@ class CaseOne():
         self.AC = ActorCritic(self.state_dim, self.action_dim, False)
 
         self.T = 1
-        self.N = 100
+        self.N = 20
         self.max_steps = 5000
         self.dt = self.T / self.N
 
