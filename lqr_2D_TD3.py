@@ -176,7 +176,7 @@ class ActorCritic():
             tape.watch(self.actor.trainable_variables)
             actions = self.actor(state_batch)
             critic_value_1,critic_value_2 = self.critic_1([state_batch, actions]), self.critic_2([state_batch, actions])
-            actor_loss = tf.math.reduce_mean(tf.minimum(critic_value_1,critic_value_2))
+            actor_loss = -tf.math.reduce_mean(tf.minimum(critic_value_1,critic_value_2))
             
         actor_grad = tape.gradient(actor_loss, self.actor.trainable_variables)
         
@@ -382,7 +382,7 @@ class CaseOne():
                     action_env = self.AC.upper_action_bound*action
 
                 if (done):
-                    reward = self.g(n,X[n])
+                    reward = -self.g(n,X[n])
                     
                     X = np.zeros((self.N,2), dtype= np.float32)
                     #X[0] = 1*np.random.rand(self.state_dim) - 1
@@ -394,7 +394,7 @@ class CaseOne():
                          
                 else:
 
-                    reward = self.f(n,X[n], action_env)
+                    reward = -self.f(n,X[n], action_env)
                     if (self.discrete_problem):
                     
                         X[n+1] =  (X[n] + action_env) + self.sig*np.random.normal(size = 2)
@@ -488,10 +488,10 @@ class CaseOne():
                     policy_y_0[ix] = AC.upper_action_bound*action[0][0]
                     policy_y_0_true[ix] = A_t[t0][ix][iy][0]
 
-        error_v_1 = (V_t[t0] - V1)**2
-        error_v_2 = (V_t[t0] - V2)**2
-        self.mean_abs_error_v1.append(np.mean((V_t[t0] - V1)**2))
-        self.mean_abs_error_v2.append(np.mean((V_t[t0] - V2)**2))
+        error_v_1 = (-V_t[t0] - V1)**2
+        error_v_2 = (-V_t[t0] - V2)**2
+        self.mean_abs_error_v1.append(np.mean((-V_t[t0] - V1)**2))
+        self.mean_abs_error_v2.append(np.mean((-V_t[t0] - V2)**2))
 
         error_P_x_0 = (policy_x_0 - policy_x_0_true)**2
         self.mean_abs_error_P_x_0.append(np.mean((policy_x_0 - policy_x_0_true)**2))

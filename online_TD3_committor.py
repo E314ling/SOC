@@ -53,8 +53,8 @@ class ActorCritic():
         self.gamma = 1
         self.tau = 0.001
         self.tau_actor = 0.001
-        self.lower_action_bound = -4
-        self.upper_action_bound = 4
+        self.lower_action_bound = -1
+        self.upper_action_bound = 1
 
         self.buffer = experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
 
@@ -94,8 +94,11 @@ class ActorCritic():
         self.var = 1
         self.var_target = 0.2
         self.var_min = 0.1
-        self.var_decay = 0
+        self.var_decay = 0.9995
         self.lr_decay = 1
+
+        self.online_N = 64
+        self.online_M = 16
         
 
         self.update_frames = 2
@@ -121,29 +124,39 @@ class ActorCritic():
     
     @tf.function
     def update_critic(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch):
+        done_batch = tf.expand_dims(done_batch, 1)
+        reward_batch = tf.expand_dims(reward_batch,1)
+       
         target_actions = self.target_policy(next_state_batch) 
         target_1, target_2 = self.target_critic_1([next_state_batch, target_actions]),self.target_critic_2([next_state_batch, target_actions])
         
         target_vals =  tf.minimum(target_1, target_2)
-
+        
         y = tf.stop_gradient(reward_batch + (1-done_batch)* self.gamma*target_vals)
-
+       
         with tf.GradientTape() as tape1:
-            tape1.watch(self.critic_1.trainable_variables)
+            
             
             critic_value_1 = self.critic_1([state_batch, action_batch])
             
-            critic_loss_1 = tf.reduce_mean((y-critic_value_1)**2)
+            critic_value_1_re = (y-critic_value_1)**2
+            critic_loss_1 = tf.reduce_mean(critic_value_1_re)
+
+            
+            
 
         with tf.GradientTape() as tape2:
-            tape2.watch(self.critic_2.trainable_variables)
+            
             
             critic_value_2 = self.critic_2([state_batch, action_batch])
-            
-            critic_loss_2 = tf.reduce_mean((y-critic_value_2)**2)
-
+            critic_value_2_re = (y-critic_value_2)**2
+            critic_loss_2 = tf.reduce_mean(critic_value_2_re)
         
+      
+
+        # getting N gradients
         critic_grad_1 = tape1.gradient(critic_loss_1, self.critic_1.trainable_variables) 
+        
         self.critic_optimizer_1.apply_gradients(zip(critic_grad_1, self.critic_1.trainable_variables))
 
         critic_grad_2 = tape2.gradient(critic_loss_2, self.critic_2.trainable_variables)
@@ -158,7 +171,7 @@ class ActorCritic():
             
             actions = self.actor(state_batch)
             critic_value_1,critic_value_2 = self.critic_1([state_batch, actions]), self.critic_2([state_batch, actions])
-            actor_loss = tf.math.reduce_mean(tf.minimum(critic_value_1,critic_value_2))
+            actor_loss = tf.reduce_mean(tf.math.reduce_mean(tf.minimum(critic_value_1,critic_value_2),0))
             
         actor_grad = tape.gradient(actor_loss, self.actor.trainable_variables)
         
@@ -168,19 +181,15 @@ class ActorCritic():
         return actor_loss
 
    
-    def learn(self,frame_num):
+    def learn(self,frame_num,states,action, new_states,reward, done):
         # get sample
 
-        record_range = min(self.buffer.buffer_counter, self.buffer.buffer_capacity)
+        state_batch = tf.convert_to_tensor(states, dtype= tf.float32)
+        action_batch = tf.convert_to_tensor(action, dtype= tf.float32)
+        reward_batch = tf.convert_to_tensor(reward, dtype= tf.float32)
+        next_state_batch = tf.convert_to_tensor(new_states, dtype= tf.float32)
 
-        batch_indices = np.random.choice(record_range, self.batch_size)
-
-        state_batch = tf.convert_to_tensor(self.buffer.state_buffer[batch_indices])
-        action_batch = tf.convert_to_tensor(self.buffer.action_buffer[batch_indices])
-        reward_batch = tf.convert_to_tensor(self.buffer.reward_buffer[batch_indices])
-        next_state_batch = tf.convert_to_tensor(self.buffer.next_state_buffer[batch_indices])
-
-        done_batch = tf.convert_to_tensor(self.buffer.done_buffer[batch_indices])
+        done_batch = tf.convert_to_tensor(done, dtype= tf.float32)
         
         critic_loss_1,critic_loss_2 = self.update_critic(state_batch, action_batch, reward_batch, next_state_batch, done_batch)
         
@@ -240,8 +249,9 @@ class ActorCritic():
 
     def policy(self, state):
         sampled_actions = self.actor(state)
+        
       
-        sampled_actions = sampled_actions + tf.random.normal(shape = sampled_actions.get_shape(), mean = 0.0, stddev = self.var, dtype = tf.float32)
+        sampled_actions = sampled_actions + tf.random.normal(shape = (sampled_actions.get_shape()), mean = 0.0, stddev = self.var, dtype = tf.float32)
 
         legal_action = tf.clip_by_value(sampled_actions, clip_value_min= -1, clip_value_max =1)
         
@@ -279,14 +289,18 @@ class CaseOne():
         self.D = 0*np.identity(2)
 
         self.num_episodes = 5100
-        self.warmup = 100
+        self.warmup = 0
         self.state_dim = 2
         self.action_dim = 2
         self.AC = ActorCritic(self.state_dim, self.action_dim, False)
 
         self.T = 1
-        self.N = 20
+        self.N = 50
         self.max_steps = 5000
+
+        self.online_N = self.AC.online_N
+        self.online_M = self.AC.online_M
+
         self.dt = self.T / self.N
 
         self.r1 = 1
@@ -417,87 +431,118 @@ class CaseOne():
         # To store average reward history of last few episodes
         avg_reward_list = []
         avg_stopping_list = []
-        X = np.zeros((self.max_steps,2), dtype= np.float32)
+        X = np.zeros((self.max_steps,self.online_N,2), dtype= np.float32)
         
-        X[0] = self.start_state()
+        for i in range(self.online_N):
+            # init the starting state for every realisation
+            X[0][i] = self.start_state()
         
+        
+
         frame_num = 0
         for ep in range(self.num_episodes):
             
-            n=0
+            stopping_time = np.zeros(self.online_N)
+            ind_stopped_trajectories = []
             episodic_reward = 0
+            finished_trajectories = np.zeros(self.online_N)
+            n=0
             while(True):
+                Xn = X[n]
+                norm_vec = np.linalg.norm(Xn,axis = 1)
+                done_C = np.where(norm_vec >=self.r2)
+                done_A = np.where(norm_vec <= self.r1)
+
+                done = np.zeros(self.online_N)
                 
-                state = np.array([X[n][0],X[n][1]], np.float32)
-                
-                done, exits = self.check_if_done(n,state)
+            
+                if (len(done_C[0]) >0):
+                    done[done_C[0]] = 1
+                if(len(done_A[0]) > 0):
+                    done[done_A[0]] = 1
 
                 
-                state = tf.expand_dims(tf.convert_to_tensor(state),0)
+                done_ind = list(done_A[0]) + list(done_C[0])
                 
-                if (ep <= self.warmup):
-                    action = 2*np.random.rand(self.state_dim) -1
-                    action_env = self.AC.upper_action_bound * action
-                else:
-                    action = self.AC.policy(state).numpy()[0]
-                    action_env = self.AC.upper_action_bound*action  
-                if (done):
-                    reward = self.g(n,X[n], exits)
-                    
-                    X = np.zeros((self.max_steps,2), dtype= np.float32)
-                    X[0] = self.start_state()
-                    
-                    new_state = np.array([X[0][0],X[0][1]], np.float32)
-                    new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
-                         
-                else:
-                    
-                    reward = self.f(n,X[n], action_env)
-                    #print('X[n], action,reward ', X[n], action,reward )
-                    
-                    if (self.discrete_problem):
-                    
-                        X[n+1] =  (X[n] + action_env) + self.sig*np.random.normal(2)
-                    else:
-                        X[n+1] =  X[n] +self.dt*action_env + self.sig*np.sqrt(self.dt)  * np.random.normal(size = 2)
-                    new_state = np.array([X[n+1][0],X[n+1][1]], np.float32)
-                   
-                    new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
+                
+
+                already_stopped_ind = list(np.where(finished_trajectories == 1)[0])
+                S1 =set(done_ind)
+                S2 = set(already_stopped_ind)
+                diff_ind = list(S1.difference(S2))
+                
+                if (len(diff_ind)> 0):
+
+                    stopping_time[diff_ind] = 0.5*self.dt*n
+
+                 
+                finished_trajectories[done_C[0]] = 1
+                finished_trajectories[done_A[0]] = 1
+
+                states = np.zeros((self.online_M*self.online_N, self.state_dim))
+
+                states = np.tile(Xn, (self.online_M, 1))
+                
+                done_stack = np.tile(done, self.online_M)
+            
+                # get the indices where we are done 
+                states = tf.convert_to_tensor(states)
+                
+                # return a (M*N,state_dim) matrix of actions
                
-                self.AC.buffer.record((state.numpy()[0],action,reward, new_state.numpy()[0], done))
+                action = self.AC.policy(states).numpy()
+                action_env = self.AC.upper_action_bound*action
                 
-                episodic_reward += reward
-                # warm up
-                if (ep >= self.warmup):
-                    self.AC.learn(n)
+                arr = np.zeros(self.online_N*self.online_M)
+                if (len(done_C[0])> 0):
                     
-                    if (n % self.AC.update_frames == 0 and n != 0):
-                        self.AC.update_target_critic(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
-                        self.AC.update_target_critic(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
-                        self.AC.update_target_actor(self.AC.target_actor.variables, self.AC.actor.variables)
-                        self.AC.update_lr()
-                        self.AC.update_var()
+                    arr[done_C[0]] = 1
+                
+               
+                reward = (1 - done_stack)*0.5*self.dt*np.linalg.norm(action_env,axis = 1)**2 + (done_stack)* (-np.log(arr + 10e-4))
+                
+                
+                
+                new_states =  states +self.dt*action_env + self.sig*np.sqrt(self.dt)  * np.random.normal(size = (self.online_M*self.online_N,2))
+                
+                episodic_reward += np.mean(reward)
+                # warm up
+                
+                self.AC.learn(n,states,action, new_states,reward, done_stack)
+                
+                if (n % self.AC.update_frames == 0 and n != 0):
+                    self.AC.update_target_critic(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
+                    self.AC.update_target_critic(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
+                    self.AC.update_target_actor(self.AC.target_actor.variables, self.AC.actor.variables)
+                    self.AC.update_lr()
+                    self.AC.update_var()
                 frame_num += 1
 
-                if(done):
-                    stopping_time_list.append(self.dt*(n+ 0.5))
-                    avg_stopping_time = np.mean(stopping_time_list[-1000:])
+      
+                if((n == self.max_steps-1) or (len(np.where(finished_trajectories == 1)[0]) >= 0.5*self.online_N)):
+                    stopping_time_list.append(np.mean(stopping_time))
+                    avg_stopping_time = np.mean(stopping_time)
                     avg_stopping_list.append(avg_stopping_time)
                     break
                 else:
                     n += 1
-            if (ep == 0):
-                self.dashboard(n_x,avg_reward_list,avg_stopping_list,self.AC,base, base_st)
-            if (ep % self.dashboard_num == 0 and ep >100):
+                    action = self.AC.policy(tf.convert_to_tensor(X[n-1])).numpy()
+                    action_env = self.AC.upper_action_bound*action
+                    X[n] = X[n-1] + self.dt*action_env + self.sig*np.sqrt(self.dt)*np.random.normal(size = (self.online_N,2))
+                    if(len(already_stopped_ind)> 0):
+                        X[n][already_stopped_ind] = X[n-1][already_stopped_ind]
+
+            
+            if (ep % self.dashboard_num == 0):
                 self.dashboard(n_x,avg_reward_list,avg_stopping_list,self.AC,base, base_st)
             
-            if (ep >= self.warmup):
+            
                 
-                ep_reward_list.append(episodic_reward)
-                # Mean of last 40 episodes
-                avg_reward = np.mean(ep_reward_list[-1000:])
-                print("Episode * {} * Avg Reward is ==> {} * Avg Stopping Time is ==> {}, var ==> {}, actor_lr ==> {}".format(ep, avg_reward,avg_stopping_time, self.AC.var, self.AC.actor_lr))
-                avg_reward_list.append(avg_reward)
+            ep_reward_list.append(episodic_reward)
+            # Mean of last 40 episodes
+            avg_reward = np.mean(ep_reward_list[-1000:])
+            print("Episode * {} * Avg Reward is ==> {} * Avg Stopping Time is ==> {}, var ==> {}, actor_lr ==> {}".format(ep, avg_reward,avg_stopping_time, self.AC.var, self.AC.actor_lr))
+            avg_reward_list.append(avg_reward)
         # Plotting graph
         # Episodes versus Avg. Rewards
         self.AC.save_model()
@@ -754,7 +799,7 @@ class CaseOne():
         fig.set_size_inches(w = 18, h= 8.5)
         fig.tight_layout()
         plt.subplots_adjust(wspace=0.15, hspace=0.25)
-        fig.savefig('.\Bilder_SOC\TD3_Committor_Episode_{}'.format(len(avg_reward_list)))
+        fig.savefig('.\Bilder_SOC\Online_TD3_Committor_Episode_{}'.format(len(avg_reward_list)))
         #plt.show()
     
 
