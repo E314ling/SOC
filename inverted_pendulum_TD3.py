@@ -48,7 +48,7 @@ class ActorCritic():
         self.state_dim = state_dim
         self.action_dim = action_dim
 
-        self.gamma = 1
+        self.gamma = 0.99
         self.tau = 0.001
         self.tau_actor = 0.001
         self.lower_action_bound = -15
