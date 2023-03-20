@@ -53,8 +53,8 @@ class ActorCritic():
         self.gamma = 1
         self.tau = 0.001
         self.tau_actor = 0.001
-        self.lower_action_bound = -4
-        self.upper_action_bound = 4
+        self.lower_action_bound = -5
+        self.upper_action_bound = 5
 
         self.buffer = experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
 
@@ -245,7 +245,6 @@ class ActorCritic():
 
         legal_action = tf.clip_by_value(sampled_actions, clip_value_min= -1, clip_value_max =1)
         
-
         return legal_action
         
     
@@ -285,7 +284,7 @@ class CaseOne():
         self.AC = ActorCritic(self.state_dim, self.action_dim, False)
 
         self.T = 1
-        self.N = 20
+        self.N = 100
         self.max_steps = 5000
         self.dt = self.T / self.N
 
@@ -467,16 +466,16 @@ class CaseOne():
                 self.AC.buffer.record((state.numpy()[0],action,reward, new_state.numpy()[0], done))
                 
                 episodic_reward += reward
-                # warm up
-                if (ep >= self.warmup):
-                    self.AC.learn(n)
-                    
-                    if (n % self.AC.update_frames == 0 and n != 0):
-                        self.AC.update_target_critic(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
-                        self.AC.update_target_critic(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
-                        self.AC.update_target_actor(self.AC.target_actor.variables, self.AC.actor.variables)
-                        self.AC.update_lr()
-                        self.AC.update_var()
+                
+                
+                self.AC.learn(n)
+                
+                if (n % self.AC.update_frames == 0 and n != 0):
+                    self.AC.update_target_critic(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
+                    self.AC.update_target_critic(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
+                    self.AC.update_target_actor(self.AC.target_actor.variables, self.AC.actor.variables)
+                    self.AC.update_lr()
+                    self.AC.update_var()
                 frame_num += 1
 
                 if(done):
@@ -486,18 +485,16 @@ class CaseOne():
                     break
                 else:
                     n += 1
-            if (ep == 0):
-                self.dashboard(n_x,avg_reward_list,avg_stopping_list,self.AC,base, base_st)
-            if (ep % self.dashboard_num == 0 and ep >100):
+          
+            if (ep % self.dashboard_num == 0):
                 self.dashboard(n_x,avg_reward_list,avg_stopping_list,self.AC,base, base_st)
             
-            if (ep >= self.warmup):
-                
-                ep_reward_list.append(episodic_reward)
-                # Mean of last 40 episodes
-                avg_reward = np.mean(ep_reward_list[-1000:])
-                print("Episode * {} * Avg Reward is ==> {} * Avg Stopping Time is ==> {}, var ==> {}, actor_lr ==> {}".format(ep, avg_reward,avg_stopping_time, self.AC.var, self.AC.actor_lr))
-                avg_reward_list.append(avg_reward)
+        
+            ep_reward_list.append(episodic_reward)
+            # Mean of last 40 episodes
+            avg_reward = np.mean(ep_reward_list[-1000:])
+            print("Episode * {} * Avg Reward is ==> {} * Avg Stopping Time is ==> {}, var ==> {}, actor_lr ==> {}".format(ep, avg_reward,avg_stopping_time, self.AC.var, self.AC.actor_lr))
+            avg_reward_list.append(avg_reward)
         # Plotting graph
         # Episodes versus Avg. Rewards
         self.AC.save_model()
@@ -559,9 +556,10 @@ class CaseOne():
             self.old_V2 = np.zeros((n_x,n_x))
 
         self.run_simulation(5, avg_reward_list,AC)
-        x_space = np.linspace(-self.r2,self.r2, n_x)
-        
-        y_space = np.linspace(-self.r2,self.r2, n_x)
+      
+
+        r = np.linspace(self.r1+0.2, self.r2-0.2, n_x)
+        p = np.linspace(0, 2*np.pi, n_x)
 
         fig = plt.figure()
         
@@ -595,48 +593,27 @@ class CaseOne():
         ax.hlines(base_st,xmin = 0, xmax = self.num_episodes, color = 'black', label = 'base: {}'.format(np.round(base_st,2)))
         ax.legend()
         
-        
-
         # for y axis poilcy
         policy_x = np.zeros((n_x,n_x))
         opt_policy_x = np.zeros((n_x, n_x))
         # for x axis poilcy
         policy_y = np.zeros((n_x,n_x))
         
-    
-
         for ix in range(n_x):
             for iy in range(n_x):
-                state = np.array([x_space[ix],y_space[iy]])
+                x,y = r[iy]*np.cos(p[ix]), r[iy]*np.sin(p[ix])
+                state = np.array([x,y])
                 action = self.AC.actor(tf.expand_dims(tf.convert_to_tensor(state),0))
                 
-               
+                opt_policy_x[ix][iy] = self.opt_control(x,y)[0]
+                P[ix][iy] = AC.upper_action_bound*action[0]
+                policy_x[ix][iy] = AC.upper_action_bound*action[0][0]
+                policy_y[ix][iy] = AC.upper_action_bound*action[0][1]
 
-                if (np.linalg.norm(state)< 1.2):
-                    V_true[ix][iy] = np.nan
-                    opt_policy_x[ix][iy] = np.nan
-                    P[ix][iy] = np.nan
-                    
-                    policy_x[ix][iy] = np.nan
-                    
-                    policy_y[ix][iy] = np.nan
-                else:
-                    
-                    opt_policy_x[ix][iy] = self.opt_control(x_space[ix], y_space[iy])[0]
-                    P[ix][iy] = AC.upper_action_bound*action[0]
-                    policy_x[ix][iy] = AC.upper_action_bound*action[0][0]
-                    policy_y[ix][iy] = AC.upper_action_bound*action[0][1]
-
-                if (np.linalg.norm(state)< 1):
-                    V_true[ix][iy] = np.nan   
-                    V1[ix][iy] = np.nan   
-                    V2[ix][iy] = np.nan
-                   
-                else:
-                    V_true[ix][iy] = self.free_energy(x_space[ix],y_space[iy])
-                    v1,v2 = self.AC.critic_1([tf.expand_dims(tf.convert_to_tensor(state),0),action]),self.AC.critic_2([tf.expand_dims(tf.convert_to_tensor(state),0),action])
-                    V1[ix][iy] = v1
-                    V2[ix][iy] = v2
+                V_true[ix][iy] = self.free_energy(x,y)
+                v1,v2 = self.AC.critic_1([tf.expand_dims(tf.convert_to_tensor(state),0),action]),self.AC.critic_2([tf.expand_dims(tf.convert_to_tensor(state),0),action])
+                V1[ix][iy] = v1
+                V2[ix][iy] = v2
                    
         change_V1 = (self.old_V1 - V1)**2
         change_V2 = (self.old_V2 - V2)**2
@@ -647,47 +624,41 @@ class CaseOne():
         self.old_V1 = V1
         self.old_V2 = V2
        
-        
+        R,P = np.meshgrid(r, p)
 
-        X,Y = np.meshgrid(x_space, y_space)
+        X,Y = R*np.cos(P), R*np.sin(P)
 
-        # ax = fig.add_subplot(2, 3, 3)
-        # ep_axis = np.linspace(0,len(avg_reward_list), len(self.change_V1))
-        # if (len(AC.critic_1_loss) != 0):
-        #     ax.plot(np.array(AC.critic_1_loss), label = 'critic loss 1: {}'.format(AC.critic_1_loss[-1]))
-        #     ax.plot(AC.critic_2_loss,  label = 'critic loss 2: {}'.format(AC.critic_2_loss[-1]))
-
-        # ax.set_xlabel('Training steps')
-      
-        # #ax.set_xlim([0,self.num_episodes])
-        # ax.set_title('critic losses')
-        # ax.legend()
-        
         ax = fig.add_subplot(2,3,3)
          # for y axis poilcy
-        policy_x2 = np.nan*np.ones((20,20))
-        policy_y2 = np.nan*np.ones((20,20))
-        x_space2 = np.linspace(-self.r2,self.r2, 20)
-        y_space2 = np.linspace(-self.r2,self.r2, 20)
-        X2,Y2 = np.meshgrid(x_space2, y_space2)
+
+
+        policy_x2 = np.nan*np.ones((30,10))
+        policy_y2 = np.nan*np.ones((30,10))
+        r = np.linspace(self.r1+0.2, self.r2-0.2, 10)
+        p = np.linspace(0, 2*np.pi, 30)
+        R2,P2 = np.meshgrid(r, p)
+
+        X2,Y2 = R2*np.cos(P2), R2*np.sin(P2)
+          
         # for x axis poilcy
         
-        opt_policy_x2 = np.nan*np.ones((20,20))
-        opt_policy_y2 = np.nan*np.ones((20,20))
-        for ix in range(20):
-            for iy in range(20):
-                state = np.array([x_space2[ix],y_space2[iy]])
-                r=np.linalg.norm(state)
-                if (r >= (self.r1+0.2) and r <= self.r2):
-                    action = self.AC.actor(tf.expand_dims(tf.convert_to_tensor(state),0))
-                    opt_action = self.opt_control(x_space2[ix],y_space2[iy])
-                    policy_x2[iy][ix] = AC.upper_action_bound*action[0][0]
-                        
-                    policy_y2[iy][ix] = AC.upper_action_bound*action[0][1]
-                    opt_policy_x2[iy][ix] = opt_action[0]
-                    opt_policy_y2[iy][ix] = opt_action[1]
+        opt_policy_x2 = np.nan*np.ones((30,10))
+        opt_policy_y2 = np.nan*np.ones((30,10))
+        for ix in range(10):
+            for iy in range(30):
+
+                x,y = r[ix]*np.cos(p[iy]), r[ix]*np.sin(p[iy])
+                state = np.array([x,y])
+              
+                action = self.AC.actor(tf.expand_dims(tf.convert_to_tensor(state),0))
+                opt_action = self.opt_control(x,y)
+                policy_x2[iy][ix] = AC.upper_action_bound*action[0][0]
+                    
+                policy_y2[iy][ix] = AC.upper_action_bound*action[0][1]
+                opt_policy_x2[iy][ix] = opt_action[0]
+                opt_policy_y2[iy][ix] = opt_action[1]
        
-        ax.quiver(X2,Y2, policy_x2, policy_y2, color = 'blue')
+        ax.quiver(X2,Y2, policy_x2, policy_y2, color = 'blue',alpha = 1)
         ax.quiver(X2,Y2, opt_policy_x2, opt_policy_y2, color = 'black', alpha = 0.4)
         
         time = np.linspace(0,2*np.pi,100)

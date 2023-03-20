@@ -264,7 +264,7 @@ class CaseOne():
 
       
 
-        self.num_episodes = 5100
+        self.num_episodes = 5000
         self.warmup = 100
         self.state_dim = 1
         self.action_dim = 1
@@ -274,7 +274,7 @@ class CaseOne():
         self.N = 50
         self.dt = self.T/self.N
 
-        self.max_iterations = 500
+        self.max_iterations = 200
 
         
         self.dashboard_num = 100
@@ -362,15 +362,15 @@ class CaseOne():
                
                 episodic_reward += reward
                 # warm up
-                if (ep >= self.warmup):
-                    self.AC.learn(n)
-                    
-                    if (n % self.AC.update_frames == 0 and n != 0):
-                        self.AC.update_target_critic(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
-                        self.AC.update_target_critic(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
-                        self.AC.update_target_actor(self.AC.target_actor.variables, self.AC.actor.variables)
-                        self.AC.update_lr()
-                        self.AC.update_var()
+                
+                self.AC.learn(n)
+                
+                if (n % self.AC.update_frames == 0 and n != 0):
+                    self.AC.update_target_critic(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
+                    self.AC.update_target_critic(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
+                    self.AC.update_target_actor(self.AC.target_actor.variables, self.AC.actor.variables)
+                    self.AC.update_lr()
+                    self.AC.update_var()
                 frame_num += 1
                 if(done):
                     stopping_time_list.append(self.dt*(n+0.5))
@@ -383,13 +383,13 @@ class CaseOne():
             if (ep % self.dashboard_num == 0):
                 self.dashboard(avg_reward_list,self.AC,avg_stopping_list)
             
-            if (ep >= self.warmup):
-                
-                ep_reward_list.append(episodic_reward)
-                # Mean of last 40 episodes
-                avg_reward = np.mean(ep_reward_list[-500:])
-                print("Episode * {} * Avg Reward is ==> {}, var ==> {}, actor_lr ==> {}".format(ep, avg_reward, self.AC.var, self.AC.actor_lr))
-                avg_reward_list.append(avg_reward)
+           
+            
+            ep_reward_list.append(episodic_reward)
+            # Mean of last 40 episodes
+            avg_reward = np.mean(ep_reward_list[-500:])
+            print("Episode * {} * Avg Reward is ==> {}, var ==> {}, actor_lr ==> {}".format(ep, avg_reward, self.AC.var, self.AC.actor_lr))
+            avg_reward_list.append(avg_reward)
         # Plotting graph
         # Episodes versus Avg. Rewards
         self.AC.save_model()

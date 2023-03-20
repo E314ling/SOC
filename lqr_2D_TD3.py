@@ -180,7 +180,6 @@ class ActorCritic():
         if (frame_num % self.update_frames == 0 and frame_num != 0):
             self.update_actor(state_batch, action_batch, reward_batch, next_state_batch, done_batch)
 
-
     @tf.function
     def update_target_critic(self, target_weights, weights):
         for (a,b) in zip(target_weights, weights):
@@ -268,7 +267,7 @@ class CaseOne():
         # g(x) = D * ||x||^2
         self.D = np.identity(2)
 
-        self.num_episodes = 5100
+        self.num_episodes = 5000
         self.warmup = 100
         self.state_dim = 2
         self.action_dim = 2
@@ -344,7 +343,7 @@ class CaseOne():
             n=0
             episodic_reward = 0
             while(True):
-                #X[n] = np.clip(X[n], a_min= -3,a_max = 3)
+                X[n] = np.clip(X[n], a_min= -4,a_max = 4)
                 state = np.array([n,X[n][0],X[n][1]], np.float32)
                
                 state = tf.expand_dims(tf.convert_to_tensor(state),0)
@@ -383,15 +382,15 @@ class CaseOne():
                
                 episodic_reward += reward
                 # warm up
-                if (ep >= self.warmup):
-                    self.AC.learn(n)
-                    
-                    if (n % self.AC.update_frames == 0 and n != 0):
-                        self.AC.update_target_critic(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
-                        self.AC.update_target_critic(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
-                        self.AC.update_target_actor(self.AC.target_actor.variables, self.AC.actor.variables)
-                        self.AC.update_lr()
-                        self.AC.update_var()
+                
+                self.AC.learn(n)
+                
+                if (n % self.AC.update_frames == 0 and n != 0):
+                    self.AC.update_target_critic(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
+                    self.AC.update_target_critic(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
+                    self.AC.update_target_actor(self.AC.target_actor.variables, self.AC.actor.variables)
+                    self.AC.update_lr()
+                    self.AC.update_var()
                 frame_num += 1
                 if(done):
                     break
@@ -401,13 +400,13 @@ class CaseOne():
             if (ep % self.dashboard_num == 0):
                 self.dashboard(n_x,V_t,A_t,avg_reward_list,self.AC,base)
             
-            if (ep >= self.warmup):
+           
                 
-                ep_reward_list.append(episodic_reward)
-                # Mean of last 40 episodes
-                avg_reward = np.mean(ep_reward_list[-500:])
-                print("Episode * {} * Avg Reward is ==> {}, var ==> {}, actor_lr ==> {}".format(ep, avg_reward, self.AC.var, self.AC.actor_lr))
-                avg_reward_list.append(avg_reward)
+            ep_reward_list.append(episodic_reward)
+            # Mean of last 40 episodes
+            avg_reward = np.mean(ep_reward_list[-500:])
+            print("Episode * {} * Avg Reward is ==> {}, var ==> {}, actor_lr ==> {}".format(ep, avg_reward, self.AC.var, self.AC.actor_lr))
+            avg_reward_list.append(avg_reward)
         # Plotting graph
         # Episodes versus Avg. Rewards
         self.AC.save_model()
@@ -560,7 +559,7 @@ class CaseOne():
         fig.set_size_inches(w = 18, h= 8)
         fig.tight_layout()
         plt.subplots_adjust(wspace=0.15, hspace=0.3)
-        fig.savefig('.\Bilder_SOC\LQR_TD3_Episode_{}'.format(len(avg_reward_list)))
+        fig.savefig('.\Bilder_SOC\Tuning_LQR_TD3_Episode_{}'.format(len(avg_reward_list)))
         #plt.show()
     
 if __name__ == "__main__":
