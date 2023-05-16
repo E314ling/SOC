@@ -48,7 +48,7 @@ class ActorCritic():
         self.state_dim = state_dim
         self.action_dim = action_dim
 
-        self.gamma = 0.99
+        self.gamma = 1
         self.tau = 0.001
         self.tau_actor = 0.001
         self.lower_action_bound = -15
@@ -89,10 +89,10 @@ class ActorCritic():
         self.actor_lr = 0.0003
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
       
-        self.var = 0.5
+        self.var = 2
         self.var_decay = 0.9999
         self.lr_decay = 1
-        self.var_min = 0.2
+        self.var_min = 0.1
         self.var_target = 0.2
         self.update_frames = 2
 
@@ -285,11 +285,11 @@ class CaseOne():
 
     def f(self, n,x,a):
 
-        return self.dt*(np.float32(self.p*a**2))
+        return self.dt*(np.float32(self.p*a**2 + self.q))
         
     def g(self, n,x,a):
 
-        return (np.float32(n*self.q))
+        return 0# (np.float32(n*self.q))
     
     def check_if_done(self,n,x):
         if n == self.max_iterations-1:
@@ -334,6 +334,7 @@ class CaseOne():
                 if (ep <= self.warmup):
                     action = tf.convert_to_tensor(2* np.random.rand() -1)
                     action_env = self.AC.upper_action_bound * action
+                    
                 else:
                     action = self.AC.policy(state)[0][0]
                     

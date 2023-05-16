@@ -175,7 +175,7 @@ class ActorCritic():
 
         batch_indices = np.random.choice(record_range, self.batch_size)
         
-        batch_indices = np.append(batch_indices, record_range)
+        batch_indices = np.append(batch_indices, record_range-1)
         
         state_batch = tf.convert_to_tensor(self.buffer.state_buffer[batch_indices])
         action_batch = tf.convert_to_tensor(self.buffer.action_buffer[batch_indices])

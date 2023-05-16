@@ -61,6 +61,7 @@ class Solution_2_D():
         x_space = np.linspace(-2,2, n_x)
         y_space = np.linspace(-2,2, n_x)
         optimal_cost = 0
+        max_action = 0
         for n in reversed(range(self.N)):
             V_t = np.zeros((n_x,n_x))
             A_t = np.zeros((n_x,n_x,2))
@@ -96,6 +97,7 @@ class Solution_2_D():
                 self.Q_t[n] = Q
                 self.P_t[n] =  P
             
+            
             for i in range(n_x):
                 for j in range(n_x):
                     x = x_space[i]
@@ -106,7 +108,10 @@ class Solution_2_D():
                     V_t[i][j] = np.dot(x_bar,z) + Q
                    
                     Kt = -np.dot(inv,BPA)
-                    
+                   
+                   
+                    if (max_action < np.abs(np.dot(Kt, z)[0])):
+                        max_action = np.abs(np.dot(Kt, z)[0])
                     A_t[i][j] = np.dot(Kt, z)
                 
             self.V[n] = V_t
@@ -126,7 +131,7 @@ class Solution_2_D():
             
             c = np.zeros(self.N)
             for n in range(self.N):
-                X[n] = np.clip(X[n], a_min= -2,a_max = 2)
+                X[n] = np.clip(X[n], a_min= -4,a_max = 4)
                 
 
                 
@@ -164,6 +169,7 @@ class Solution_2_D():
         
         print('optimal_cost', optimal_cost)
         print(np.mean(cum_cost))
+        print('max_action', max_action)
         self.obj.P_t, self.obj.Q_t = self.P_t, self.Q_t
         return self.V, self.poli, np.mean(cum_cost)
 
