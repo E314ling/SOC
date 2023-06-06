@@ -90,15 +90,15 @@ class ActorCritic():
 
     def __init__(self, state_dim, action_dim, load_model,run,N, approx_type: str):
         self.N = N
-        self.batch_size = 255
+        self.batch_size = 127
         self.max_memory_size = 1000000
 
         self.state_dim = state_dim
         self.action_dim = action_dim
 
         self.gamma = 1
-        self.tau = 0.005
-        self.tau_actor = 0.005
+        self.tau = 0.001
+        self.tau_actor = 0.001
         self.lower_action_bound = -10
         self.upper_action_bound = 10
 
@@ -460,8 +460,8 @@ class ActorCritic():
         input = tf.concat([t,t_2,a,a_2,x_1,x_2,x_1x_2,x_1_2,x_2_2,ax_1,ax_2,ta,tx_1,tx_2],1)
         #input = layers.BatchNormalization()(input)
         # out = theta_1 x_1**2 + theta_2 x_2**2 + theta_3 a_1**2 + theta_4 a_2**2 + theta_5
-        out = layers.Dense(1, kernel_initializer= last_init)(input)
-
+        out = layers.Dense(1, kernel_initializer= last_init, kernel_regularizer='l1')(input)
+        
         model = keras.Model(inputs = [t_input, x_1_input, x_2_input, action_input], outputs = out)
 
         return model
@@ -487,9 +487,9 @@ class ActorCritic():
 
         
         input = tf.concat([t,x_1,x_2],1)
-        input = layers.BatchNormalization()(input)
-        out = layers.Dense(self.action_dim, activation = 'tanh',kernel_initializer=last_init)(input)
-        
+        #input = layers.BatchNormalization()(input)
+        out = layers.Dense(self.action_dim, activation = 'linear',kernel_initializer=last_init, kernel_regularizer='l1')(input)
+        out = tf.clip_by_value(out, clip_value_max= 1, clip_value_min=-1)
         # Our upper bound is 2.0 .
         #outputs = outputs * self.upper_action_bound
         model = tf.keras.Model(inputs = [t_input, x_1_input, x_2_input], outputs = out)
@@ -531,7 +531,7 @@ class ActorCritic():
         
         x = tf.concat([sin,cos],1)
        
-        out = layers.Dense(1, kernel_initializer= last_init)(x)
+        out = layers.Dense(1, kernel_initializer= last_init,kernel_regularizer='l1')(x)
         model = keras.Model(inputs = [t_input, x_1_input, x_2_input, action_input], outputs = out)
 
         return model
@@ -569,7 +569,7 @@ class ActorCritic():
         x = tf.concat([sin,cos],1)
       
 
-        out = layers.Dense(self.action_dim,activation= 'tanh', kernel_initializer=last_init)(x)
+        out = layers.Dense(self.action_dim,activation= 'tanh', kernel_initializer=last_init,kernel_regularizer='l1')(x)
         
         model = keras.Model(inputs = [t_input, x_1_input, x_2_input], outputs = out)
 
@@ -593,7 +593,7 @@ class ActorCritic():
         y = RBFLayer(center_c, 1/(self.num_centers[1]+1))(x)
         
     
-        out = layers.Dense(1, kernel_initializer= last_init)(y)
+        out = layers.Dense(1, kernel_initializer= last_init,kernel_regularizer='l1')(y)
         model = keras.Model(inputs = [t_input, x_1_input, x_2_input , action_input], outputs = out)
 
         return model
@@ -612,7 +612,7 @@ class ActorCritic():
         
         y = RBFLayer(center_a, 1/(self.num_centers[1]+1))(x)
         
-        out = layers.Dense(self.action_dim, activation = 'tanh', kernel_initializer= last_init)(y)
+        out = layers.Dense(self.action_dim, activation = 'tanh', kernel_initializer= last_init,kernel_regularizer='l1')(y)
         model = keras.Model(inputs = [t_input, x_1_input, x_2_input], outputs = out)
 
         return model
@@ -636,7 +636,7 @@ class ActorCritic():
         
         #noice = self.noice_Obj()
         noice = tf.random.normal(shape = sampled_actions.get_shape(), mean = 0.0, stddev = self.var_target, dtype = tf.float32)
-        noice = tf.clip_by_value(noice, -0.5, 0.5)
+        noice = tf.clip_by_value(noice, -0.5/self.upper_action_bound, 0.5/self.upper_action_bound)
         sampled_actions = sampled_actions + noice
         
         legal_action = tf.clip_by_value(sampled_actions, clip_value_min = -1, clip_value_max =1)
@@ -731,7 +731,69 @@ class CaseOne():
         X = np.array([start_r*np.cos(random_pi),start_r*np.sin(random_pi)])
 
         return X
+    
+    def fill_buffer(self, num_episodes):
+        print('start warm up...')
+        
+        for ep in range(num_episodes):
+            X = np.zeros((self.N,2), dtype= np.float32)
+            X[0] = self.start_state()
+            done = False
+            done_training = False
+            n = 0
+            while(True):
+
+                X[n] = np.clip(X[n], a_min= -4,a_max = 4)
+                state = np.array([n,X[n][0],X[n][1]], np.float32)
+               
+               
+                state = tf.expand_dims(tf.convert_to_tensor(state),0)
+                done = self.check_if_done(n,state)
+
+                action = tf.convert_to_tensor(2* np.random.rand(2) -1)
+                action_env = self.AC.upper_action_bound * action
+                if (done):
+                    reward = self.g(n,X[n])
+                    
+                    X = np.zeros((self.N,2), dtype= np.float32)
+                    #X[0] = 1*np.random.rand(self.state_dim) - 1
+
+                    #X[0] = np.clip(X[0], a_min= -1,a_max = 1)
+                    X[0] = self.start_state()
+                    new_state = np.array([0,X[0][0],X[0][1]], np.float32)
+                    new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
+                         
+                else:
+
+                    reward = self.f(n,X[n], action_env)
+                    if (self.discrete_problem):
+                    
+                        X[n+1] =  (X[n] + action_env) + self.sig*np.random.normal(size = 2)
+                    else:
+                        X[n+1] =  X[n] + (X[n] + action_env)*self.dt + self.sig*np.sqrt(self.dt)  * np.random.normal(size=2)
+                    new_state = np.array([(n+1),X[n+1][0],X[n+1][1]], np.float32)
+                    new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
+                
+                if (n <= self.N-2):
+                    terminal_cond = 0
+                    if (n== self.N-2):
+                        done_training = True
+
+                        terminal_cond = self.g(n,X[n+1])
+                    
+                    self.AC.buffer.record((state.numpy()[0],action.numpy(),reward, new_state.numpy()[0], done_training, terminal_cond))
+            
+               
+                if(done):
+                    break
+                else:
+                    n += 1
+        print('warm up done')
+        print('buffer samples: ', self.AC.buffer.buffer_counter)
+
     def run_episodes(self, n_x,V_t,A_t, base):
+        warm_up = 50
+        self.fill_buffer(warm_up)
         ep_reward_list = []
         # To store average reward history of last few episodes
         avg_reward_list = []
@@ -814,12 +876,7 @@ class CaseOne():
 
 
                 episodic_reward += reward
-               
-
-            
-                
-
-               
+                              
                 if(done):
                     break
                 else:

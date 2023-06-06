@@ -51,10 +51,10 @@ class ActorCritic():
         self.action_dim = action_dim
 
         self.gamma = 1
-        self.tau = 0.001
-        self.tau_actor = 0.001
-        self.lower_action_bound = -5
-        self.upper_action_bound = 5
+        self.tau = 0.005
+        self.tau_actor = 0.005
+        self.lower_action_bound = -10
+        self.upper_action_bound = 10
 
         self.buffer = experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
 
@@ -91,10 +91,11 @@ class ActorCritic():
         self.actor_lr = 0.0003
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
       
-        self.var = 1
-        self.var_target = 0.2
-        self.var_min = 0.1
-        self.var_decay = 0
+        self.var = 2
+        self.var_decay = 0.9999
+        self.var_target = 0.2 #/ self.upper_action_bound
+        self.var_min = 0.1 #/ self.upper_action_bound
+        
         self.lr_decay = 1
         
 
@@ -210,11 +211,11 @@ class ActorCritic():
 
         input = tf.concat([state_input, action_input],1)
        
-        out_1 = layers.Dense(128, activation = 'relu')(input)
-        out_1 = layers.BatchNormalization()(out_1)
-        out_1 = layers.Dense(128, activation = 'relu')(out_1)
+        out_1 = layers.Dense(128, activation = 'relu',kernel_regularizer='l2')(input)
+      
+        out_1 = layers.Dense(128, activation = 'relu',kernel_regularizer='l2')(out_1)
         
-        out_1 = layers.Dense(1, kernel_initializer= last_init)(out_1)
+        out_1 = layers.Dense(1, kernel_initializer= last_init,kernel_regularizer='l2')(out_1)
 
         model = keras.Model(inputs = [state_input, action_input], outputs = out_1)
 
@@ -227,12 +228,12 @@ class ActorCritic():
 
         inputs = layers.Input(shape=(self.state_dim,))
        
-        out = layers.Dense(128, activation="relu")(inputs)
-        out = layers.BatchNormalization()(out)
-        out = layers.Dense(128, activation="relu")(out)
+        out = layers.Dense(128, activation="relu",kernel_regularizer='l2')(inputs)
+    
+        out = layers.Dense(128, activation="relu",kernel_regularizer='l2')(out)
        
-        outputs = layers.Dense(self.action_dim, activation='tanh', kernel_initializer=last_init)(out)
-
+        outputs = layers.Dense(self.action_dim, activation='linear', kernel_initializer=last_init,kernel_regularizer='l2')(out)
+        outputs = tf.clip_by_value(outputs, clip_value_max= 1, clip_value_min=-1)
         # Our upper bound is 2.0 .
         #outputs = outputs * self.upper_action_bound
         model = tf.keras.Model(inputs, outputs)

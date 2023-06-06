@@ -1,13 +1,12 @@
 /.vscode
 /Bilder_Episoden
 /Bilder_SOC
-/rnn.ipynb
 /SOC_Model.h5
 /plotting_solution.py
 /LQR_Model.h5
 /Stopping_Time_Model.h5
-/test.ipynb
 /__pycache__
 /Models
 /OpenAI.ipynb
 /Saved_Runs
+/test.py

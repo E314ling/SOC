@@ -6,165 +6,10 @@ import matplotlib.pyplot as plt
 import linear_quadratic_regulator_DP as LQR
 
 
-
-class SumTree:
-    def __init__(self, size):
-        self.nodes = [0] * (2 * size - 1)
-        self.data = [None] * size
-
-        self.size = size
-        self.count = 0
-        self.real_size = 0
-
-    @property
-    def total(self):
-        return self.nodes[0]
-
-    def update(self, data_idx, value):
-        idx = data_idx + self.size - 1  # child index in tree array
-        change = value - self.nodes[idx]
-
-        self.nodes[idx] = value
-
-        parent = (idx - 1) // 2
-        while parent >= 0:
-            self.nodes[parent] += change
-            parent = (parent - 1) // 2
-
-    def add(self, value, data):
-        self.data[self.count] = data
-        self.update(self.count, value)
-
-        self.count = (self.count + 1) % self.size
-        self.real_size = min(self.size, self.real_size + 1)
-
-    def get(self, cumsum):
-        assert cumsum <= self.total
-
-        idx = 0
-        while 2 * idx + 1 < len(self.nodes):
-            left, right = 2*idx + 1, 2*idx + 2
-            
-            if cumsum <= self.nodes[left]:
-                idx = left
-            else:
-                idx = right
-                cumsum = cumsum - self.nodes[left]
-
-        data_idx = idx - self.size + 1
-
-        return data_idx, self.nodes[idx], self.data[data_idx]
-
-    def __repr__(self):
-        return f"SumTree(nodes={self.nodes.__repr__()}, data={self.data.__repr__()})"
-
-
-class prioritized_experience_memory():
-
-    def __init__(self, buffer_capacity, batch_size, state_dim, action_dim):
-        # Number of "experiences" to store at max
-        self.buffer_capacity = buffer_capacity
-        self.sum_tree = SumTree(self.buffer_capacity)
-
-        self.eps = 1
-        self.alp = 0.5
-        self.beta = 0.7 # [0,1]
-        self.max_priority = self.eps
-        # Num of tuples to train on.
-        # Number of "experiences" to store at max
-        self.buffer_capacity = buffer_capacity
-        # Num of tuples to train on.
-        self.batch_size = batch_size
-
-        # Its tells us num of times record() was called.
-        self.buffer_counter = 0
-
-        # Instead of list of tuples as the exp.replay concept go
-        # We use different np.arrays for each tuple element
-        self.state_buffer = np.zeros((self.buffer_capacity, state_dim+1), dtype=np.float32)
-        self.action_buffer = np.zeros((self.buffer_capacity, action_dim), dtype=np.float32)
-        self.reward_buffer = np.zeros((self.buffer_capacity, 1), dtype=np.float32)
-        self.next_state_buffer = np.zeros((self.buffer_capacity, state_dim+1), dtype=np.float32)
-        self.done_buffer = np.zeros((self.buffer_capacity, 1), dtype=np.float32)
-        self.terminal_condition_buffer = np.zeros((self.buffer_capacity, 1), dtype=np.float32)
-
-   # Takes (s,a,r,s') obervation tuple as input
-    def record(self, obs_tuple):
-        # Set index to zero if buffer_capacity is exceeded,
-        # replacing old records
-        index = self.buffer_counter % self.buffer_capacity
-
-        self.state_buffer[index] = obs_tuple[0]
-        self.action_buffer[index] = obs_tuple[1]
-        self.reward_buffer[index] = obs_tuple[2]
-        self.next_state_buffer[index] = obs_tuple[3]
-        self.done_buffer[index] = obs_tuple[4]
-        self.terminal_condition_buffer[index] = obs_tuple[5]
-
-        self.buffer_counter += 1
-
-
-    def sample(self,record_range):
-        
-        sample_idxs, tree_idxs = [], []
-        priorities = np.empty(self.batch_size, dtype=np.float32)
-
-        # To sample a minibatch of size k, the range [0, p_total] is divided equally into k ranges.
-        # Next, a value is uniformly sampled from each range. Finally the transitions that correspond
-        # to each of these sampled values are retrieved from the tree. (Appendix B.2.1, Proportional prioritization)
-        segment = self.sum_tree.total / self.batch_size
-        for i in range(self.batch_size):
-            a, b = segment * i, segment * (i + 1)
-
-            cumsum = np.random.uniform(a, b)
-            # sample_idx is a sample index in buffer, needed further to sample actual transitions
-            # tree_idx is a index of a sample in the tree, needed further to update priorities
-            tree_idx, priority, sample_idx = self.sum_tree.get(cumsum)
-            
-            priorities[i] = priority
-            tree_idxs.append(tree_idx)
-            sample_idxs.append(sample_idx)
-
-        # Concretely, we define the probability of sampling transition i as P(i) = p_i^α / \sum_{k} p_k^α
-        # where p_i > 0 is the priority of transition i. (Section 3.3)
-        probs = priorities / self.sum_tree.total
-
-        # The estimation of the expected value with stochastic updates relies on those updates corresponding
-        # to the same distribution as its expectation. Prioritized replay introduces bias because it changes this
-        # distribution in an uncontrolled fashion, and therefore changes the solution that the estimates will
-        # converge to (even if the policy and state distribution are fixed). We can correct this bias by using
-        # importance-sampling (IS) weights w_i = (1/N * 1/P(i))^β that fully compensates for the non-uniform
-        # probabilities P(i) if β = 1. These weights can be folded into the Q-learning update by using w_i * δ_i
-        # instead of δ_i (this is thus weighted IS, not ordinary IS, see e.g. Mahmood et al., 2014).
-        # For stability reasons, we always normalize weights by 1/maxi wi so that they only scale the
-        # update downwards (Section 3.4, first paragraph)
-        weights = (record_range * probs) ** -self.beta
-
-        # As mentioned in Section 3.4, whenever importance sampling is used, all weights w_i were scaled
-        # so that max_i w_i = 1. We found that this worked better in practice as it kept all weights
-        # within a reasonable range, avoiding the possibility of extremely large updates. (Appendix B.2.1, Proportional prioritization)
-        weights = weights / weights.max()
-        
-        return np.array(sample_idxs,dtype = np.int32), weights
-    
-    def update_priorities(self, data_idxs, priorities):
-        priorities = priorities.numpy()
-        
-
-        for data_idx, priority in zip(data_idxs, priorities):
-            # The first variant we consider is the direct, proportional prioritization where p_i = |δ_i| + eps,
-            # where eps is a small positive constant that prevents the edge-case of transitions not being
-            # revisited once their error is zero. (Section 3.3)
-            priority = (priority + self.eps) ** self.alp
-
-            self.sum_tree.update(data_idx, priority)
-            self.max_priority = max(self.max_priority, priority)
-
-
-
 class experience_memory():
 
     def __init__(self, buffer_capacity, batch_size, state_dim, action_dim):
+        self.action_dim = action_dim
         # Number of "experiences" to store at max
         self.buffer_capacity = buffer_capacity
         # Num of tuples to train on.
@@ -181,6 +26,8 @@ class experience_memory():
         self.next_state_buffer = np.zeros((self.buffer_capacity, state_dim+1), dtype=np.float32)
         self.done_buffer = np.zeros((self.buffer_capacity, 1), dtype=np.float32)
         self.terminal_condition_buffer = np.zeros((self.buffer_capacity, 1), dtype=np.float32)
+
+        self.BFGS_buffer = np.zeros((self.buffer_capacity, action_dim, action_dim), dtype=np.float32)
     # Takes (s,a,r,s') obervation tuple as input
     def record(self, obs_tuple):
         # Set index to zero if buffer_capacity is exceeded,
@@ -194,7 +41,10 @@ class experience_memory():
         self.done_buffer[index] = obs_tuple[4]
         self.terminal_condition_buffer[index] = obs_tuple[5]
 
+        self.BFGS_buffer[index] = np.identity(self.action_dim)
+
         self.buffer_counter += 1
+
 
 class ActorCritic():
 
@@ -212,8 +62,8 @@ class ActorCritic():
         self.lower_action_bound = -10
         self.upper_action_bound = 10
         self.dt = 1/100
-        #self.buffer = experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
-        self.buffer = prioritized_experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
+        self.buffer = experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
+
         self.polynom = False
         
         # init the neural nets
@@ -267,12 +117,14 @@ class ActorCritic():
 
 
         self.critic_lr = 0.0003
-        self.critic_optimizer_1 = tf.keras.optimizers.Adam(self.critic_lr)
-        self.critic_optimizer_2 = tf.keras.optimizers.Adam(self.critic_lr)
+        self.critic_optimizer_1 = tf.keras.optimizers.Adam(self.critic_lr, clipvalue=5)
+        self.critic_optimizer_2 = tf.keras.optimizers.Adam(self.critic_lr, clipvalue=5)
        
         self.actor_lr = 0.0003
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
-      
+
+        self.alpha = 0.3
+
         self.var = 2
         self.var_decay = 0
         self.lr_decay = 1
@@ -305,25 +157,26 @@ class ActorCritic():
     
     @tf.function
     def update_critic(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch,terminal_condition_batch):
-        target_actions = self.target_policy(next_state_batch) 
-        
-        target_1, target_2 = self.target_critic_1([next_state_batch, target_actions]),self.target_critic_2([next_state_batch, target_actions])
+        target_actions = self.target_policy(next_state_batch)
+
+        next_input = tf.concat([next_state_batch, target_actions], axis = 1)
+        target_1, target_2 = self.target_critic_1(next_input),self.target_critic_2(next_input)
         
         target_vals =  tf.minimum(target_1, target_2)
 
         y = (1-done_batch)*tf.stop_gradient(reward_batch + self.gamma*target_vals) + done_batch*terminal_condition_batch
-
+        input = tf.concat([state_batch, action_batch], axis = 1)
         with tf.GradientTape() as tape1:
             tape1.watch(self.critic_1.trainable_variables)
             
-            critic_value_1 = self.critic_1([state_batch, action_batch])
+            critic_value_1 = self.critic_1(input)
             
             critic_loss_1 = tf.reduce_mean((y-critic_value_1)**2)
 
         with tf.GradientTape() as tape2:
             tape2.watch(self.critic_2.trainable_variables)
             
-            critic_value_2 = self.critic_2([state_batch, action_batch])
+            critic_value_2 = self.critic_2(input)
             
             critic_loss_2 = tf.reduce_mean((y-critic_value_2)**2)
 
@@ -336,24 +189,110 @@ class ActorCritic():
       
         self.critic_optimizer_2.apply_gradients(zip(critic_grad_2, self.critic_2.trainable_variables))
 
-        return tf.maximum(tf.abs((y-critic_value_1)),tf.abs((y-critic_value_2)))
 
     @tf.function
-    def update_actor(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch,terminal_condition_batch):
-       
+    def update_actor(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch, terminal_condition_batch, bfgs_action_batch):
+        
         with tf.GradientTape() as tape:
             tape.watch(self.actor.trainable_variables)
             actions = self.actor(state_batch)
-            critic_value_1,critic_value_2 = self.critic_1([state_batch, actions]), self.critic_2([state_batch, actions])
+            input = tf.concat([state_batch, actions], axis = 1)
+            critic_value_1,critic_value_2 = self.critic_1(input), self.critic_2(input)
             #actor_loss = tf.math.reduce_mean(tf.minimum(critic_value_1,critic_value_2))
-            actor_loss = tf.math.reduce_mean(0.5*(critic_value_1+critic_value_2))
+            #dif = actions - bfgs_action_batch
+            
+            actor_loss = tf.math.reduce_mean(0.5*(critic_value_1+critic_value_2)) #+ self.alpha *tf.reduce_sum(tf.multiply(dif,dif), axis = 1)
         actor_grad = tape.gradient(actor_loss, self.actor.trainable_variables)
       
         self.actor_optimizer.apply_gradients(
             zip(actor_grad, self.actor.trainable_variables)
         )
 
-   
+    @tf.function
+    def get_hessian(self,inputs):
+
+        loss = self.critic_1(inputs)
+        return tf.hessians(loss, inputs)
+    
+    @tf.function
+    def get_gradient(self,inputs):
+
+        loss = self.critic_1(inputs)
+        return tf.gradients(loss, inputs)
+    
+    @tf.function
+    def get_gradient_hessian(self,inputs):
+
+        loss = self.critic_1(inputs)
+        return tf.gradients(loss, inputs), tf.hessians(loss, inputs)
+    
+    
+    @tf.function()
+    def get_BFGS_actions(self, state_batch, bfgs_batch):
+        
+        eta = 0.001
+        delta = 0.01
+        runs = 5
+        a = self.actor(state_batch)
+        x = state_batch
+        a_old = a
+        for _ in range(runs):
+            
+            B_old = bfgs_batch
+            #print('B', B_old)
+            
+            input_old = tf.concat([x,a_old], axis = 1)
+            gradient_old = self.get_gradient(input_old)[0][0:,self.state_dim +1:]
+            #print('gradient_old', gradient_old)
+        
+
+            s_old = tf.reshape(tf.cast(gradient_old, dtype = tf.float32), (self.batch_size+1,self.action_dim,1))
+
+            
+            inv_hess = tf.linalg.inv(B_old) + delta*tf.eye(self.action_dim, batch_shape= (self.batch_size+1,))
+            #print('inv_hess', inv_hess)
+            step = eta * (inv_hess @ s_old)[...,0]
+            #print('steps', step)
+            new_a = tf.cast(a_old, dtype =tf.float32)-step
+
+            input_new = tf.concat([x,new_a], axis = 1)
+            gradient_new = self.get_gradient(input_new)[0][0:,self.state_dim +1:]
+            #print('gradient_new',gradient_new)
+        
+
+            s_new = tf.reshape(tf.cast(gradient_new, dtype = tf.float32), (s_old.get_shape()[:]))
+
+            y_k = tf.reshape(new_a - tf.cast(a_old, dtype = tf.float32) ,(s_old.get_shape()[:]))
+
+            r_k = s_new - s_old - delta* y_k
+
+            y_r_k = tf.reshape(1 / tf.reduce_sum(tf.multiply(y_k, r_k), axis = 1), (-1, 1, 1))
+            r_r_k = tf.einsum("nu,nv->nuv", tf.squeeze(r_k), tf.squeeze(r_k))
+
+            B_y = B_old @ y_k
+            yBy =  tf.reshape(tf.reduce_sum(tf.multiply(y_k,B_y), axis = 1), (-1, 1, 1))
+
+            ByBy = tf.einsum("nu,nv->nuv", tf.squeeze(B_y), tf.squeeze(B_y))
+            # print('s_old, s_new',s_old, s_new)
+            # print('y_k, r_k', y_k, r_k)
+            # print('y_r_k, r_r_k',tf.reduce_sum(tf.multiply(y_k, r_k), axis = 1), y_r_k,r_r_k)
+            # print('yBy*ByBy', yBy*ByBy)
+            B_new = B_old + y_r_k* r_r_k + yBy*ByBy + delta*tf.eye(self.action_dim, batch_shape= (self.batch_size+1,))
+            
+            B_old = B_new
+            a_old = new_a
+            
+        input_old = tf.concat([x,a], axis = 1)
+        q_new = self.critic_1(input_new)
+
+        q = self.critic_1(input_old)
+        # print('q',q)
+        # print('q_new', q_new)
+        # print('tf.less(q_new,q), dtype = tf.float32)',tf.less(q_new,q), dtype = tf.float32)
+
+        a_id = tf.reshape(tf.cast(tf.less(q_new,q), dtype = tf.float32), (-1,1))
+        return a_id*new_a + (1-a_id)* a , tf.eye(self.action_dim, batch_shape= (self.batch_size+1,))
+    
     def learn(self,frame_num):
         # get sample
 
@@ -370,11 +309,15 @@ class ActorCritic():
         
         done_batch = tf.convert_to_tensor(self.buffer.done_buffer[batch_indices])
         terminal_condition_batch = tf.convert_to_tensor(self.buffer.terminal_condition_buffer[batch_indices])
-        
-        prios = self.update_critic(state_batch, action_batch, reward_batch, next_state_batch, done_batch, terminal_condition_batch)
-        self.buffer.update_priorities(batch_indices, prios)
+        bfgs_batch = self.buffer.BFGS_buffer[batch_indices]
+
+        self.update_critic(state_batch, action_batch, reward_batch, next_state_batch, done_batch, terminal_condition_batch)
+
         if (frame_num % self.update_frames == 0 and frame_num != 0):
-            self.update_actor(state_batch, action_batch, reward_batch, next_state_batch, done_batch, terminal_condition_batch)
+            for _ in range(self.update_frames):
+                bfgs_action_batch, new_bfgs = self.get_BFGS_actions(state_batch, bfgs_batch)
+                self.buffer.BFGS_buffer[batch_indices] = new_bfgs
+                self.update_actor(state_batch, action_batch, reward_batch, next_state_batch, done_batch, terminal_condition_batch, bfgs_action_batch)
 
     
     
@@ -388,49 +331,15 @@ class ActorCritic():
         for (a,b) in zip(target_weights, weights):
             a.assign(self.tau_actor *b + (1-self.tau_actor) *a)
 
-    def get_critic_NN_poly(self):
-        # input [state, action]
-        last_init = tf.random_uniform_initializer(minval=-0.01, maxval=0.01)
-
-        state_input = layers.Input(shape =(self.state_dim+1,))
-        action_input = layers.Input(shape =(self.action_dim,))
-
-        a = action_input
-        x = state_input
-        
-        x_a = tf.einsum("nu,nv->nuv", state_input, action_input)
-        z = tf.ones_like(x_a)
-        z = tf.linalg.band_part(z,0,-1)
-        x_a = x_a*z
-        x_a = layers.Flatten()(x_a)
-
-        x_x = tf.einsum("nu,nv->nuv", state_input, state_input)
-        z = tf.ones_like(x_x)
-        z = tf.linalg.band_part(z,0,-1)
-        x_x = x_x*z
-        x_x = layers.Flatten()(x_x)
-
-        a_a = tf.einsum("nu,nv->nuv", action_input, action_input)
-        a_a = layers.Flatten()(a_a)
-
-        input = tf.concat([x,a,x_a,x_x,a_a],1)
-
-        # out = theta_1 x_1**2 + theta_2 x_2**2 + theta_3 a_1**2 + theta_4 a_2**2 + theta_5
-        out_1 = layers.Dense(1, kernel_initializer= last_init)(input)
-
-        model = keras.Model(inputs = [state_input, action_input], outputs = out_1)
-
-        return model
-
+    
 
     def get_critic_NN(self):
         # input [state, action]
         last_init = tf.random_uniform_initializer(minval=-0.01, maxval=0.01)
 
-        state_input = layers.Input(shape =(self.state_dim+1,))
-        action_input = layers.Input(shape =(self.action_dim,))
+        input = layers.Input(shape =(self.state_dim+1 + self.action_dim,))
+        
 
-        input = tf.concat([state_input, action_input],1)
         #out = layers.BatchNormalization()(input)
         out_1 = layers.Dense(128, activation = 'elu', kernel_regularizer='l2')(input)
         
@@ -438,29 +347,11 @@ class ActorCritic():
        
         out_1 = layers.Dense(1, kernel_initializer= last_init, kernel_regularizer='l2')(out_1)
 
-        model = keras.Model(inputs = [state_input, action_input], outputs = out_1)
+        model = keras.Model(inputs = input, outputs = out_1)
 
         return model
     
-    def get_actor_NN_poly(self):
-        last_init = tf.random_uniform_initializer(minval=-0.01, maxval=0.01)
-
-        inputs = layers.Input(shape=(self.state_dim+1,))
-        
-        # this is just a linear model y = theta_1 x_1 + theta_2 x_2 + theta_3
-        x = inputs
-        x_x = tf.einsum("nu,nv->nuv", x, x)
-        z = tf.ones_like(x_x)
-        z = tf.linalg.band_part(z,0,-1) - tf.linalg.band_part(z,0,0)
-        x_x = x_x*z
-        x_x = layers.Flatten()(x)
-        input = tf.concat([x,x_x],1)
-        outputs = layers.Dense(self.action_dim, activation='tanh', kernel_initializer=last_init, kernel_regularizer='l2')(input)
-
-        # Our upper bound is 2.0 .
-        #outputs = outputs * self.upper_action_bound
-        model = tf.keras.Model(inputs, outputs)
-        return model
+    
     
     def get_actor_NN(self):
         
@@ -798,8 +689,13 @@ class CaseOne():
                     else:
                         P_x[ix][iy] = AC.upper_action_bound* action[0][0]
                         P_y[ix][iy] = AC.upper_action_bound* action[0][1]
+                   
+                    state = tf.expand_dims(tf.convert_to_tensor(state,dtype = tf.float32),0)
+                    
+                    input = tf.concat([state,action], axis = 1)
 
-                    v1,v2 = self.AC.critic_1([tf.expand_dims(tf.convert_to_tensor(state),0),action]),self.AC.critic_2([tf.expand_dims(tf.convert_to_tensor(state),0),action])
+
+                    v1,v2 = self.AC.critic_1(input), self.AC.critic_2(input)
                     
                     V1[ix][iy] = v1
                     
