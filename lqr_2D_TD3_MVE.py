@@ -204,11 +204,12 @@ class ActorCritic():
         self.max_memory_size = 1000000
 
         self.state_dim = state_dim
+        self.state_bound = 3
         self.action_dim = action_dim
 
         self.gamma = 1
-        self.tau = 0.005
-        self.tau_actor = 0.005
+        self.tau = 0.001
+        self.tau_actor = 0.001
         self.lower_action_bound = -5
         self.upper_action_bound = 5
         self.dt = 1/100
@@ -265,6 +266,8 @@ class ActorCritic():
                 self.target_actor = self.get_actor_NN()
                 self.target_actor.set_weights(self.actor.get_weights())
 
+                self.reward_model = self.get_reward_NN()
+                self.transition_model = self.get_transition_NN()
 
         self.critic_lr = 0.0001
         self.critic_optimizer_1 = tf.keras.optimizers.Adam(self.critic_lr)
@@ -272,7 +275,11 @@ class ActorCritic():
        
         self.actor_lr = 0.0001
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
-      
+
+        self.world_lr = 0.0001
+        self.reward_optimizer = tf.keras.optimizers.Adam(self.critic_lr)
+        self.transition_optimizer = tf.keras.optimizers.Adam(self.critic_lr)
+
         self.var = 1
         self.var_decay = 0
         self.lr_decay = 1
@@ -280,6 +287,7 @@ class ActorCritic():
         self.var_target = 0.2 #/ self.upper_action_bound
         self.update_frames = 2
 
+        
        
     def save_model(self, run):
         if self.polynom:
@@ -305,6 +313,9 @@ class ActorCritic():
     
     @tf.function
     def update_critic(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch,terminal_condition_batch):
+        next_state_batch = self.transition_model([state_batch, action_batch])
+        reward_batch = self.reward_model([state_batch, action_batch])
+        
         target_actions = self.target_policy(next_state_batch) 
         
         target_1, target_2 = self.target_critic_1([next_state_batch, target_actions]),self.target_critic_2([next_state_batch, target_actions])
@@ -353,7 +364,24 @@ class ActorCritic():
             zip(actor_grad, self.actor.trainable_variables)
         )
 
-   
+    @tf.function
+    def update_world_model(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch,terminal_condition_batch):
+
+        with tf.GradientTape() as tape1:
+            tape1.watch(self.reward_model.trainable_variables)
+            dream_reward = self.reward_model([state_batch, action_batch])
+
+            reward_loss = tf.math.reduce_mean((dream_reward - reward_batch)**2)
+        reward_grad = tape1.gradient(reward_loss, self.reward_model.trainable_variables)
+        self.reward_optimizer.apply_gradients(zip(reward_grad, self.reward_model.trainable_variables))
+
+        with tf.GradientTape() as tape2:
+            tape2.watch(self.transition_model.trainable_variables)
+            dream_transition = self.transition_model([state_batch, action_batch])
+
+            transition_loss = tf.math.reduce_mean((dream_transition - next_state_batch)**2)
+        transition_grad = tape2.gradient(transition_loss, self.transition_model.trainable_variables)
+        self.transition_optimizer.apply_gradients(zip(transition_grad, self.transition_model.trainable_variables))
     def learn(self,frame_num):
         # get sample
 
@@ -371,6 +399,7 @@ class ActorCritic():
         done_batch = tf.convert_to_tensor(self.buffer.done_buffer[batch_indices])
         terminal_condition_batch = tf.convert_to_tensor(self.buffer.terminal_condition_buffer[batch_indices])
         
+        self.update_world_model(state_batch, action_batch, reward_batch, next_state_batch, done_batch, terminal_condition_batch)
         prios = self.update_critic(state_batch, action_batch, reward_batch, next_state_batch, done_batch, terminal_condition_batch)
         #self.buffer.update_priorities(batch_indices, prios)
         if (frame_num % self.update_frames == 0 and frame_num != 0):
@@ -389,7 +418,49 @@ class ActorCritic():
         for (a,b) in zip(target_weights, weights):
             a.assign(self.tau_actor *b + (1-self.tau_actor) *a)
 
-   
+    def get_reward_NN(self):
+        # input [state, action]
+        last_init = tf.random_uniform_initializer(minval=-1, maxval=1)
+
+        state_input = layers.Input(shape =(self.state_dim+1,))
+        action_input = layers.Input(shape =(self.action_dim,))
+
+        input = tf.concat([state_input, action_input],1)
+        #out = layers.BatchNormalization()(input)
+        out_1 = layers.Dense(128, activation = 'elu', kernel_regularizer='l2')(input)
+        
+        out_1 = layers.Dense(128, activation = 'elu', kernel_regularizer='l2')(out_1)
+       
+        out_1 = layers.Dense(1, kernel_initializer= last_init, kernel_regularizer='l2')(out_1)
+
+        model = keras.Model(inputs = [state_input, action_input], outputs = out_1)
+
+        return model
+    
+
+    def get_transition_NN(self):
+        # input [state, action]
+        last_init = tf.random_uniform_initializer(minval=-1, maxval=1)
+
+        state_input = layers.Input(shape =(self.state_dim+1,))
+        action_input = layers.Input(shape =(self.action_dim,))
+
+        input = tf.concat([state_input, action_input],1)
+        #out = layers.BatchNormalization()(input)
+        out_1 = layers.Dense(128, activation = 'elu', kernel_regularizer='l2')(input)
+        
+        out_1 = layers.Dense(128, activation = 'elu', kernel_regularizer='l2')(out_1)
+       
+        out_1 = layers.Dense(1, activation = 'tanh', kernel_initializer= last_init, kernel_regularizer='l2')(out_1)
+        out_2 = layers.Dense(self.state_dim, activation = 'tanh', kernel_initializer= last_init, kernel_regularizer='l2')(out_1)
+        out_1 = 100*0.5*(out_1 +1 )
+
+        out_2 = self.state_bound * out_2
+
+        out = tf.concat([out_1, out_2],1)
+        model = keras.Model(inputs = [state_input, action_input], outputs = out)
+
+        return model
 
     def get_critic_NN(self):
         # input [state, action]
@@ -553,7 +624,7 @@ class CaseOne():
             n = 0
             while(True):
 
-                X[n] = np.clip(X[n], a_min= -3,a_max = 3)
+                X[n] = np.clip(X[n], a_min= -self.AC.state_bound,a_max = self.AC.state_bound)
                 state = np.array([n,X[n][0],X[n][1]], np.float32)
                
                

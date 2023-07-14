@@ -48,7 +48,7 @@ class ActorCritic():
         self.state_dim = state_dim
         self.action_dim = action_dim
 
-        self.gamma = 0.9999
+        self.gamma = 1
         self.tau = 0.001
         self.tau_actor = 0.001
         self.lower_action_bound = -15
@@ -152,7 +152,7 @@ class ActorCritic():
             actions = self.actor(state_batch)
             critic_value_1,critic_value_2 = self.critic_1([state_batch, actions]), self.critic_2([state_batch, actions])
             # for maximization put a minus infront
-            actor_loss = tf.math.reduce_mean(tf.minimum(critic_value_1,critic_value_2))
+            actor_loss = tf.math.reduce_mean(0.5*(critic_value_1+critic_value_2))
             
         actor_grad = tape.gradient(actor_loss, self.actor.trainable_variables)
         
@@ -178,7 +178,9 @@ class ActorCritic():
         self.update_critic(state_batch, action_batch, reward_batch, next_state_batch, done_batch)
 
         if (frame_num % self.update_frames == 0 and frame_num != 0):
-            self.update_actor(state_batch, action_batch, reward_batch, next_state_batch, done_batch)
+
+            for _ in range(self.update_frames):
+                self.update_actor(state_batch, action_batch, reward_batch, next_state_batch, done_batch)
 
 
     @tf.function
@@ -193,16 +195,16 @@ class ActorCritic():
 
     def get_critic_NN(self):
         # input [state, action]
-        last_init = tf.random_uniform_initializer(minval=-0.003, maxval=0.003)
+        last_init = tf.random_uniform_initializer(minval=-1, maxval=1)
 
         state_input = layers.Input(shape =(self.state_dim,))
         action_input = layers.Input(shape =(self.action_dim,))
 
         input = tf.concat([state_input, action_input],1)
        
-        out_1 = layers.Dense(128, activation = 'relu', kernel_regularizer='l2')(input)
+        out_1 = layers.Dense(128, activation = 'elu', kernel_regularizer='l2')(input)
       
-        out_1 = layers.Dense(128, activation = 'relu', kernel_regularizer='l2')(out_1)
+        out_1 = layers.Dense(128, activation = 'elu', kernel_regularizer='l2')(out_1)
        
         out_1 = layers.Dense(1, kernel_initializer= last_init, kernel_regularizer='l2')(out_1)
 
@@ -217,9 +219,9 @@ class ActorCritic():
 
         inputs = layers.Input(shape=(self.state_dim,))
         
-        out = layers.Dense(128, activation="relu", kernel_regularizer='l2')(inputs)
+        out = layers.Dense(128, activation="elu", kernel_regularizer='l2')(inputs)
         
-        out = layers.Dense(128, activation="relu", kernel_regularizer='l2')(out)
+        out = layers.Dense(128, activation="elu", kernel_regularizer='l2')(out)
         
         outputs = layers.Dense(self.action_dim, activation='linear', kernel_initializer=last_init, kernel_regularizer='l2')(out)
         outputs = tf.clip_by_value(outputs, clip_value_max= 1, clip_value_min=-1)
@@ -271,7 +273,7 @@ class CaseOne():
         self.AC = ActorCritic(self.state_dim, self.action_dim, False)
 
         self.T = 1
-        self.N = 20
+        self.N = 40
         self.dt = self.T/self.N
 
         self.max_iterations = int(self.N/5) * 200
@@ -429,12 +431,12 @@ class CaseOne():
                 
                 self.AC.learn(n)
                 
-                if (n % self.AC.update_frames == 0 and n != 0):
-                    self.AC.update_target_critic(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
-                    self.AC.update_target_critic(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
-                    self.AC.update_target_actor(self.AC.target_actor.variables, self.AC.actor.variables)
-                    self.AC.update_lr()
-                    self.AC.update_var()
+                if (frame_num % self.AC.update_frames == 0 and n != 0):
+                    for _ in range(self.AC.update_frames):
+                        self.AC.update_target_critic(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
+                        self.AC.update_target_critic(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
+                        self.AC.update_target_actor(self.AC.target_actor.variables, self.AC.actor.variables)
+                       
                 frame_num += 1
                 if(done):
                     stopping_time_list.append(self.dt*(n+0.5))
@@ -635,7 +637,7 @@ class CaseOne():
     
 if __name__ == "__main__":
 
-    runs = 5
+    runs = 1
 
     for i in range(runs):
 

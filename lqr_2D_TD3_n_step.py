@@ -6,6 +6,97 @@ import matplotlib.pyplot as plt
 import linear_quadratic_regulator_DP as LQR
 
 
+from collections import deque
+
+class n_step_buffer():
+
+    def __init__(self,n_step, state_dim, action_dim, N, gam):
+        self.max_len = n_step
+        self.N = N # time horizon
+        self.gam = gam
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+
+
+        self.buffer_counter = 0
+        self.state_buffer = np.zeros((self.max_len, self.state_dim+1), dtype=np.float32)
+        self.action_buffer = np.zeros((self.max_len, self.action_dim), dtype=np.float32)
+        self.reward_buffer = np.zeros((self.max_len, 1), dtype=np.float32)
+        self.next_state_buffer = np.zeros((self.max_len, self.state_dim+1), dtype=np.float32)
+        self.done_buffer = np.zeros((self.max_len, 1), dtype=np.float32)
+        self.terminal_condition_buffer = np.zeros((self.max_len, 1), dtype=np.float32)
+
+    def record(self, obs_tuple):
+        # Set index to zero if buffer_capacity is exceeded,
+        # replacing old records
+        
+        if self.buffer_counter <= self.max_len-1:
+            index = self.buffer_counter % self.max_len
+            self.state_buffer[index] = obs_tuple[0]
+            self.action_buffer[index] = obs_tuple[1]
+            self.reward_buffer[index] = obs_tuple[2]
+            self.next_state_buffer[index] = obs_tuple[3]
+            self.done_buffer[index] = obs_tuple[4]
+            self.terminal_condition_buffer[index] = obs_tuple[5]
+        else:
+            
+            self.state_buffer = np.roll(self.state_buffer, -1,axis = 0)
+            self.action_buffer = np.roll(self.action_buffer, -1, axis = 0)
+            self.reward_buffer = np.roll(self.reward_buffer, -1, axis = 0)
+            self.next_state_buffer = np.roll(self.next_state_buffer, -1, axis = 0)
+            self.done_buffer = np.roll(self.done_buffer, -1, axis = 0)
+            self.terminal_condition_buffer = np.roll(self.terminal_condition_buffer, -1,axis=0)
+            
+            index = -1
+            self.state_buffer[index] = obs_tuple[0]
+            self.action_buffer[index] = obs_tuple[1]
+            self.reward_buffer[index] = obs_tuple[2]
+            self.next_state_buffer[index] = obs_tuple[3]
+            self.done_buffer[index] = obs_tuple[4]
+            self.terminal_condition_buffer[index] = obs_tuple[5]
+           
+        self.buffer_counter += 1
+    
+    def reset_buffer(self):
+        self.buffer_counter = 0
+        self.state_buffer = np.zeros((self.max_len, self.state_dim+1), dtype=np.float32)
+        self.action_buffer = np.zeros((self.max_len, self.action_dim), dtype=np.float32)
+        self.reward_buffer = np.zeros((self.max_len, 1), dtype=np.float32)
+        self.next_state_buffer = np.zeros((self.max_len, self.state_dim+1), dtype=np.float32)
+        self.done_buffer = np.zeros((self.max_len, 1), dtype=np.float32)
+        self.terminal_condition_buffer = np.zeros((self.max_len, 1), dtype=np.float32)
+
+    def return_sample(self):
+        print('states', self.state_buffer)
+        print('rewards', self.reward_buffer)
+        state,action,reward, next_state, done, terminal_cond = self.state_buffer[0], self.action_buffer[0], self.reward_buffer[0], self.next_state_buffer[0], self.done_buffer[0], self.terminal_condition_buffer[0]
+        # print('state,reward, done, terminal_cond',state,reward, done, terminal_cond)
+        n = state[0]
+        # print('n',n)
+        dif = int(self.N-2-n +1)
+        # print('dif', dif)
+        if(dif >= self.max_len):
+            # print('all')
+            for i in reversed(range(1,self.max_len)):
+                r = self.reward_buffer[i],  
+                d = self.done_buffer[i] 
+                terminal_cond = self.terminal_condition_buffer[i]
+
+                reward = reward + self.gam * ((1-d)*r +d *terminal_cond)
+                
+            return state, action,reward, self.next_state_buffer[-1], self.done_buffer[-1], self.terminal_condition_buffer[-1]
+        else:
+            if(dif == 1):
+                self.reset_buffer()
+                return state, action,reward, next_state, done, terminal_cond
+            
+            for i in range(1,dif):
+                r = self.reward_buffer[i],  
+                d = self.done_buffer[i] 
+                terminal_cond = self.terminal_condition_buffer[i]
+                
+                reward = ((1-d)*r +d *terminal_cond) + self.gam * reward
+            return state, action,reward, self.next_state_buffer[dif-1], self.done_buffer[dif-1], self.terminal_condition_buffer[dif-1]
 
 class SumTree:
     def __init__(self, size):
@@ -198,23 +289,29 @@ class experience_memory():
 
 class ActorCritic():
 
-    def __init__(self, state_dim, action_dim, load_model,run):
+    def __init__(self, state_dim, action_dim, load_model,run, N):
 
         self.batch_size = 255
+        self.num_weights = 128
         self.max_memory_size = 1000000
 
         self.state_dim = state_dim
         self.action_dim = action_dim
 
         self.gamma = 1
-        self.tau = 0.005
-        self.tau_actor = 0.005
-        self.lower_action_bound = -5
-        self.upper_action_bound = 5
+        self.tau = 0.001
+        self.tau_actor = 0.001
+        self.lower_action_bound = -10
+        self.upper_action_bound = 10
         self.dt = 1/100
-        self.buffer = experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
-        #self.buffer = prioritized_experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
+        self.N = N
+        #self.buffer = experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
+        self.buffer = prioritized_experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
         self.polynom = False
+
+        # multi step TD learning
+        self.n_step = 3
+        self.n_step_buffer = n_step_buffer(self.n_step, state_dim, action_dim,self.N , self.gamma)
         
         # init the neural nets
         if (load_model):
@@ -224,7 +321,6 @@ class ActorCritic():
 
                 self.critic_2 = tf.keras.models.load_model('./Models/poly_LQR_2D_TD3_critic_2_run_{}.h5'.format(run))
                 self.target_critic_2 = tf.keras.models.load_model('./Models/poly_LQR_2D_TD3_critic_2_run_{}.h5'.format(run))
-
 
                 self.actor = tf.keras.models.load_model('./Models/poly_LQR_2D_TD3_actor_run_{}.h5'.format(run))
                 self.target_actor = tf.keras.models.load_model('./Models/poly_LQR_2D_TD3_actor_run_{}.h5'.format(run))
@@ -239,47 +335,35 @@ class ActorCritic():
                 self.actor = tf.keras.models.load_model('./Models/LQR_2D_TD3_actor_run_{}.h5'.format(run))
                 self.target_actor = tf.keras.models.load_model('./Models/LQR_2D_TD3_actor_run_{}.h5'.format(run))
         else:
-            if self.polynom:
-                print('Polynomial Ansatz')
-                self.critic_1 = self.get_critic_NN_poly()
-                self.target_critic_1 = self.get_critic_NN_poly()
-                #self.target_critic_1.set_weights(self.critic_1.get_weights())
+            
+            self.critic_1 = self.get_critic_NN()
+            self.target_critic_1 = self.get_critic_NN()
+            self.target_critic_1.set_weights(self.critic_1.get_weights())
 
-                self.critic_2 = self.get_critic_NN_poly()
-                self.target_critic_2 = self.get_critic_NN_poly()
-                #self.target_critic_2.set_weights(self.critic_2.get_weights())
+            self.critic_2 = self.get_critic_NN()
+            self.target_critic_2 = self.get_critic_NN()
+            self.target_critic_2.set_weights(self.critic_2.get_weights())
 
-                self.actor = self.get_actor_NN_poly()
-                self.target_actor = self.get_actor_NN_poly()
-                #self.target_actor.set_weights(self.actor.get_weights())
-            else:
-                self.critic_1 = self.get_critic_NN()
-                self.target_critic_1 = self.get_critic_NN()
-                self.target_critic_1.set_weights(self.critic_1.get_weights())
-
-                self.critic_2 = self.get_critic_NN()
-                self.target_critic_2 = self.get_critic_NN()
-                self.target_critic_2.set_weights(self.critic_2.get_weights())
-
-                self.actor = self.get_actor_NN()
-                self.target_actor = self.get_actor_NN()
-                self.target_actor.set_weights(self.actor.get_weights())
+            self.actor = self.get_actor_NN()
+            self.target_actor = self.get_actor_NN()
+            self.target_actor.set_weights(self.actor.get_weights())
 
 
-        self.critic_lr = 0.0001
+        self.critic_lr = 0.0003
         self.critic_optimizer_1 = tf.keras.optimizers.Adam(self.critic_lr)
         self.critic_optimizer_2 = tf.keras.optimizers.Adam(self.critic_lr)
        
-        self.actor_lr = 0.0001
+        self.actor_lr = 0.0003
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
       
-        self.var = 1
+        self.var = 0.1
         self.var_decay = 0
         self.lr_decay = 1
-        self.var_min = 0.1 #/ self.upper_action_bound
-        self.var_target = 0.2 #/ self.upper_action_bound
+        self.var_min = 0.01 / self.upper_action_bound
+        self.var_target = 0.02 / self.upper_action_bound
         self.update_frames = 2
 
+        
        
     def save_model(self, run):
         if self.polynom:
@@ -345,8 +429,8 @@ class ActorCritic():
             tape.watch(self.actor.trainable_variables)
             actions = self.actor(state_batch)
             critic_value_1,critic_value_2 = self.critic_1([state_batch, actions]), self.critic_2([state_batch, actions])
-            actor_loss = tf.math.reduce_mean(critic_value_1)
-            #actor_loss = tf.math.reduce_mean(0.5*(critic_value_1+critic_value_2))
+            #actor_loss = tf.math.reduce_mean(tf.minimum(critic_value_1,critic_value_2))
+            actor_loss = tf.math.reduce_mean(0.5*(critic_value_1+critic_value_2))
         actor_grad = tape.gradient(actor_loss, self.actor.trainable_variables)
       
         self.actor_optimizer.apply_gradients(
@@ -372,7 +456,7 @@ class ActorCritic():
         terminal_condition_batch = tf.convert_to_tensor(self.buffer.terminal_condition_buffer[batch_indices])
         
         prios = self.update_critic(state_batch, action_batch, reward_batch, next_state_batch, done_batch, terminal_condition_batch)
-        #self.buffer.update_priorities(batch_indices, prios)
+        self.buffer.update_priorities(batch_indices, prios)
         if (frame_num % self.update_frames == 0 and frame_num != 0):
             for _ in range(self.update_frames):
                 self.update_actor(state_batch, action_batch, reward_batch, next_state_batch, done_batch, terminal_condition_batch)
@@ -389,37 +473,36 @@ class ActorCritic():
         for (a,b) in zip(target_weights, weights):
             a.assign(self.tau_actor *b + (1-self.tau_actor) *a)
 
-   
-
     def get_critic_NN(self):
         # input [state, action]
-        last_init = tf.random_uniform_initializer(minval=-1, maxval=1)
+        last_init = tf.random_uniform_initializer(minval=-0.01, maxval=0.01)
 
         state_input = layers.Input(shape =(self.state_dim+1,))
         action_input = layers.Input(shape =(self.action_dim,))
 
         input = tf.concat([state_input, action_input],1)
         #out = layers.BatchNormalization()(input)
-        out_1 = layers.Dense(128, activation = 'elu', kernel_regularizer='l2')(input)
+        out_1 = layers.Dense(self.num_weights, activation = 'relu', kernel_regularizer='l2')(input)
         
-        out_1 = layers.Dense(128, activation = 'elu', kernel_regularizer='l2')(out_1)
+        out_1 = layers.Dense(self.num_weights, activation = 'relu', kernel_regularizer='l2')(out_1)
        
         out_1 = layers.Dense(1, kernel_initializer= last_init, kernel_regularizer='l2')(out_1)
 
         model = keras.Model(inputs = [state_input, action_input], outputs = out_1)
 
         return model
-   
+    
+    
     
     def get_actor_NN(self):
         
         # Initialize weights between -3e-3 and 3-e3
-        last_init = tf.random_uniform_initializer(minval=-1, maxval=1)
+        last_init = tf.random_uniform_initializer(minval=-0.01, maxval=0.01)
 
         inputs = layers.Input(shape=(self.state_dim+1,))
         #inputs = layers.BatchNormalization()(inputs)
-        out = layers.Dense(128, activation="elu", kernel_regularizer='l2')(inputs)
-        out = layers.Dense(128, activation="elu", kernel_regularizer='l2')(out)
+        out = layers.Dense(self.num_weights, activation="relu", kernel_regularizer='l2')(inputs)
+        out = layers.Dense(self.num_weights, activation="relu", kernel_regularizer='l2')(out)
 
         outputs = layers.Dense(self.action_dim, activation='linear', kernel_initializer=last_init, kernel_regularizer='l2')(out)
         outputs = tf.clip_by_value(outputs, clip_value_max= 1, clip_value_min=-1)
@@ -451,12 +534,14 @@ class ActorCritic():
         legal_action = tf.clip_by_value(sampled_actions, clip_value_min = -1, clip_value_max =1)
 
         return legal_action
+    
+
+    
         
 class CaseOne():
 
     def __init__(self,run):
         # dX_t = (A X_t + B u_t) dt + sig * dB_t
-        self.run = run
         self.dim = 2
         self.A = np.identity(self.dim)
         self.B = np.identity(self.dim)
@@ -470,17 +555,18 @@ class CaseOne():
         # g(x) = D * ||x||^2
         self.D = np.identity(2)
 
-        self.num_episodes = 5000
-        self.warmup = 0
+        self.num_episodes = 10000
+        self.warmup = 50
         self.state_dim = 2
         self.action_dim = 2
         self.load = False
-        self.AC = ActorCritic(self.state_dim, self.action_dim, self.load, run)
         
         self.T = 1
-        self.N = 100
+        self.N = 50
         self.dt = self.T/self.N
+        self.AC = ActorCritic(self.state_dim, self.action_dim, self.load, run, self.N)
         self.AC.dt = self.dt
+
 
         self.r = 0
         self.dashboard_num = 100
@@ -535,7 +621,7 @@ class CaseOne():
         r1 = 0 + 0.1
         r2 = 3 - 0.1
         start_r = (r2 -r1)* np.random.rand() + r1
-        random_pi = 2*np.pi * np.random.rand()
+        random_pi = 2*np.pi *np.random.rand()
         
         X = np.array([start_r*np.cos(random_pi),start_r*np.sin(random_pi)])
         X = 3*2*np.random.rand(self.dim) - 3
@@ -553,7 +639,7 @@ class CaseOne():
             n = 0
             while(True):
 
-                X[n] = np.clip(X[n], a_min= -3,a_max = 3)
+                #X[n] = np.clip(X[n], a_min= -4,a_max = 4)
                 state = np.array([n,X[n][0],X[n][1]], np.float32)
                
                
@@ -571,13 +657,10 @@ class CaseOne():
                     #X[0] = np.clip(X[0], a_min= -1,a_max = 1)
                     X[0] = self.start_state()
                     new_state = np.array([0,X[0][0],X[0][1]], np.float32)
-                    new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
-                         
+                    new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)   
                 else:
-
                     reward = self.f(n,X[n], action_env)
                     if (self.discrete_problem):
-                    
                         X[n+1] =  (X[n] + action_env) + self.sig*np.random.normal(size = 2)
                     else:
                         X[n+1] =  X[n] + (X[n] + action_env)*self.dt + self.sig*np.sqrt(self.dt)  * np.random.normal(size=2)
@@ -591,9 +674,34 @@ class CaseOne():
 
                         terminal_cond = self.g(n,X[n+1])
                     
-                    self.AC.buffer.record((state.numpy()[0],action.numpy(),reward, new_state.numpy()[0], done_training, terminal_cond))
-            
-               
+                    
+                    self.AC.n_step_buffer.record((state, action, reward, new_state, done_training,terminal_cond))
+                    if (self.AC.n_step_buffer.buffer_counter >= self.AC.n_step) :  # fill the n-step buffer for the first translation
+                        # add a multi step transition
+                        state_b, action_b, reward_b, new_state_b, done_b, term_c = self.AC.n_step_buffer.return_sample()
+                        # print('state_b, reward_b, term_c',state_b, reward_b, term_c)
+                        self.AC.buffer.record(
+                            (state_b, action_b, reward_b, new_state_b, done_b, term_c))
+                        print('s',state_b)
+                        print('ns',new_state_b)
+                        print('d',done_b)
+                        print('r',reward_b)
+                        print('tc',terminal_cond)
+                    # getting the last n_step-1 samples
+                    if (n == self.N-2):
+                        for _ in range(self.AC.n_step_buffer.max_len-1):
+                            self.AC.n_step_buffer.record((state, action, reward, new_state, done_training,terminal_cond))
+                            state_b, action_b, reward_b, new_state_b, done_b, term_c = self.AC.n_step_buffer.return_sample()
+                            # print('state_b, reward_b, term_c',state_b, reward_b, term_c)
+                            
+                            self.AC.buffer.record(
+                                (state_b, action_b, reward_b, new_state_b, done_b, term_c))
+                            
+                            print('s',state_b)
+                            print('ns',new_state_b)
+                            print('d',done_b)
+                            print('r',reward_b)
+                            print('tc',terminal_cond)
                 if(done):
                     break
                 else:
@@ -603,7 +711,7 @@ class CaseOne():
 
     def run_episodes(self, n_x,V_t,A_t, base):
 
-        warm_up = 50
+        warm_up = self.warmup
 
         self.fill_buffer(warm_up)
 
@@ -621,7 +729,7 @@ class CaseOne():
             done_training = False
             episodic_reward = 0
             while(True):
-                X[n] = np.clip(X[n], a_min= -3,a_max = 3)
+                #X[n] = np.clip(X[n], a_min= -4,a_max = 4)
                 state = np.array([n,X[n][0],X[n][1]], np.float32)
                
                 state = tf.expand_dims(tf.convert_to_tensor(state),0)
@@ -629,11 +737,15 @@ class CaseOne():
 
                 
 
-                action = self.AC.policy(state)[0]
-                if self.AC.polynom:
-                    action_env = action
+                if (ep <= self.warmup):
+                    action = tf.convert_to_tensor(2* np.random.rand(2) -1)
+                    action_env = self.AC.upper_action_bound * action
                 else:
-                    action_env = self.AC.upper_action_bound*action
+                    action = self.AC.policy(state)[0]
+                    if self.AC.polynom:
+                        action_env = action
+                    else:
+                        action_env = self.AC.upper_action_bound*action
 
                 if (done):
                     reward = self.g(n,X[n])
@@ -663,13 +775,30 @@ class CaseOne():
                         done_training = True
 
                         terminal_cond = self.g(n,X[n+1])
+                    
+                    
+                    self.AC.n_step_buffer.record((state, action, reward, new_state, done_training,terminal_cond))
+                    if (self.AC.n_step_buffer.buffer_counter >= self.AC.n_step) :  # fill the n-step buffer for the first translation
+                        # add a multi step transition
+                        state_b, action_b, reward_b, new_state_b, done_b, term_c = self.AC.n_step_buffer.return_sample()
+                       
+                        self.AC.buffer.record(
+                            (state_b, action_b, reward_b, new_state_b, done_b, term_c))
 
-                    self.AC.buffer.record((state.numpy()[0],action.numpy(),reward, new_state.numpy()[0], done_training, terminal_cond))
+                    # getting the last n_step-1 samples
+                    if (n == self.N-2):
+                        for _ in range(self.AC.n_step_buffer.max_len-1):
+                            self.AC.n_step_buffer.record((state, action, reward, new_state, done_training,terminal_cond))
+                            state_b, action_b, reward_b, new_state_b, done_b, term_c = self.AC.n_step_buffer.return_sample()
+                            
+                            self.AC.buffer.record(
+                                (state_b, action_b, reward_b, new_state_b, done_b, term_c))
+
             
+               
                 self.AC.learn(frame_num)
-                
-                if (frame_num % self.AC.update_frames == 0 and n != 0):
-                    for _ in range(self.AC.update_frames):
+                if (frame_num % self.AC.update_frames == 0 and frame_num != 0):
+                    for _ in range(self.AC.update_frames):  
                         self.AC.update_target_critic(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
                         self.AC.update_target_critic(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
                         self.AC.update_target_actor(self.AC.target_actor.variables, self.AC.actor.variables)
@@ -687,10 +816,12 @@ class CaseOne():
                 self.save_all(n_x,V_t,A_t,ep_reward_list,avg_reward_list,self.AC,base)
                 #self.dashboard(n_x,V_t,A_t,avg_reward_list,self.AC,base)
             
+           
+                
             ep_reward_list.append(episodic_reward)
             # Mean of last 40 episodes
-            avg_reward = np.mean(ep_reward_list[-1000:])
-            print("Episode/Run * {} / {} * Avg Reward is ==> {}, var ==> {}, actor_lr ==> {}".format(ep,self.run, avg_reward, self.AC.var, self.AC.actor_lr))
+            avg_reward = np.mean(ep_reward_list[-500:])
+            print("Episode * {} * Avg Reward is ==> {}, var ==> {}, actor_lr ==> {}".format(ep, avg_reward, self.AC.var, self.AC.actor_lr))
             avg_reward_list.append(avg_reward)
 
             
@@ -771,12 +902,12 @@ if __name__ == "__main__":
 
    
     n_x = 40
-    runs = 5
+    runs = 1
 
-    for i in range(0,5):
+    for i in range(0,runs):
         lqr = CaseOne(i)
         V_t,A_t,base = LQR.Solution_2_D(lqr).create_solution(n_x)
         #V_t, A_t, base = LQR.Solution(lqr).dynamic_programming(n_x)
     
         lqr.run_episodes(n_x,V_t,A_t, base)
-        
+    

@@ -44,17 +44,17 @@ class ActorCritic():
 
     def __init__(self, state_dim, action_dim, load_model):
 
-        self.batch_size = 512
+        self.batch_size = 256
         self.max_memory_size = 1000000
 
         self.state_dim = state_dim
         self.action_dim = action_dim
 
         self.gamma = 1
-        self.tau = 0.005
-        self.tau_actor = 0.005
-        self.lower_action_bound = -10
-        self.upper_action_bound = 10
+        self.tau = 0.001
+        self.tau_actor = 0.001
+        self.lower_action_bound = -5
+        self.upper_action_bound = 5
 
         self.buffer = experience_memory(self.max_memory_size, self.batch_size, self.state_dim, self.action_dim)
 
@@ -92,7 +92,7 @@ class ActorCritic():
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
       
         self.var = 2
-        self.var_decay = 0.9999
+        self.var_decay = 0
         self.var_target = 0.2 #/ self.upper_action_bound
         self.var_min = 0.1 #/ self.upper_action_bound
         
@@ -189,8 +189,9 @@ class ActorCritic():
         self.critic_2_loss.append(critic_loss_2)
 
         if (frame_num % self.update_frames == 0 and frame_num != 0):
-            actor_loss = self.update_actor(state_batch)
-            self.actor_loss.append(actor_loss)
+            for _ in range(self.update_frames):
+                actor_loss = self.update_actor(state_batch)
+                self.actor_loss.append(actor_loss)
            
 
     @tf.function
@@ -211,9 +212,9 @@ class ActorCritic():
 
         input = tf.concat([state_input, action_input],1)
        
-        out_1 = layers.Dense(128, activation = 'relu',kernel_regularizer='l2')(input)
+        out_1 = layers.Dense(128, activation = 'elu',kernel_regularizer='l2')(input)
       
-        out_1 = layers.Dense(128, activation = 'relu',kernel_regularizer='l2')(out_1)
+        out_1 = layers.Dense(128, activation = 'elu',kernel_regularizer='l2')(out_1)
         
         out_1 = layers.Dense(1, kernel_initializer= last_init,kernel_regularizer='l2')(out_1)
 
@@ -228,9 +229,9 @@ class ActorCritic():
 
         inputs = layers.Input(shape=(self.state_dim,))
        
-        out = layers.Dense(128, activation="relu",kernel_regularizer='l2')(inputs)
+        out = layers.Dense(128, activation="elu",kernel_regularizer='l2')(inputs)
     
-        out = layers.Dense(128, activation="relu",kernel_regularizer='l2')(out)
+        out = layers.Dense(128, activation="elu",kernel_regularizer='l2')(out)
        
         outputs = layers.Dense(self.action_dim, activation='linear', kernel_initializer=last_init,kernel_regularizer='l2')(out)
         outputs = tf.clip_by_value(outputs, clip_value_max= 1, clip_value_min=-1)
@@ -285,8 +286,8 @@ class CaseOne():
         self.AC = ActorCritic(self.state_dim, self.action_dim, False)
 
         self.T = 1
-        self.N = 100
-        self.max_steps = 2000
+        self.N = 250
+        self.max_steps = 5000
         self.dt = self.T / self.N
 
         self.r1 = 1
@@ -409,8 +410,71 @@ class CaseOne():
                     n += 1
                     
         return np.mean(reward_arr),  np.mean(stopping_arr)
+    def fill_buffer(self, num_episodes):
+        print('start warm up...')
+        
+        for ep in range(num_episodes):
+            
+            X = np.zeros((self.max_steps,2), dtype= np.float32)
+        
+            X[0] = self.start_state()
+        
+            n=0
+            
+            while(True):
+                
+                state = np.array([X[n][0],X[n][1]], np.float32)
+                
+                done, exits = self.check_if_done(n,state)
+
+                
+                state = tf.expand_dims(tf.convert_to_tensor(state),0)
+              
+                action = 2*np.random.rand(self.action_dim) -1
+                action_env = self.AC.upper_action_bound * action  
+                if (done):
+                    reward = self.g(n,X[n], exits)
+                    
+                    X = np.zeros((self.max_steps,2), dtype= np.float32)
+                    X[0] = self.start_state()
+                    
+                    new_state = np.array([X[0][0],X[0][1]], np.float32)
+                    new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
+                         
+                else:
+                    
+                    reward = self.f(n,X[n], action_env)
+                    #print('X[n], action,reward ', X[n], action,reward )
+                    
+                    if (self.discrete_problem):
+                    
+                        X[n+1] =  (X[n] + action_env) + self.sig*np.random.normal(2)
+                    else:
+                        X[n+1] =  X[n] +self.dt*action_env + self.sig*np.sqrt(self.dt)  * np.random.normal(size = 2)
+                    new_state = np.array([X[n+1][0],X[n+1][1]], np.float32)
+                   
+                    new_state = tf.expand_dims(tf.convert_to_tensor(new_state),0)
+                
+                if done:
+                    if n <= self.max_steps-1:
+                        self.AC.buffer.record((state.numpy()[0],action,reward, new_state.numpy()[0], done))
+                else:
+                    self.AC.buffer.record((state.numpy()[0],action,reward, new_state.numpy()[0], done))
+
+              
+                if(done):
+                    print('done')
+                    break
+                else:
+                    n += 1
+        print('warm up done')
+        print('buffer samples: ', self.AC.buffer.buffer_counter)
+
 
     def run_episodes(self, n_x):
+        warm_up = 50
+
+        self.fill_buffer(warm_up)
         base, base_st = self.get_baseline()
         ep_reward_list = []
         stopping_time_list = []
@@ -435,12 +499,9 @@ class CaseOne():
                 
                 state = tf.expand_dims(tf.convert_to_tensor(state),0)
                 
-                if (ep <= self.warmup):
-                    action = 2*np.random.rand(self.state_dim) -1
-                    action_env = self.AC.upper_action_bound * action
-                else:
-                    action = self.AC.policy(state).numpy()[0]
-                    action_env = self.AC.upper_action_bound*action  
+               
+                action = self.AC.policy(state).numpy()[0]
+                action_env = self.AC.upper_action_bound*action  
                 if (done):
                     reward = self.g(n,X[n], exits)
                     
@@ -475,10 +536,11 @@ class CaseOne():
                 
                 self.AC.learn(n)
                 
-                if (n % self.AC.update_frames == 0 and n != 0):
-                    self.AC.update_target_critic(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
-                    self.AC.update_target_critic(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
-                    self.AC.update_target_actor(self.AC.target_actor.variables, self.AC.actor.variables)
+                if (frame_num % self.AC.update_frames == 0 and n != 0):
+                    for _ in range(self.AC.update_frames):
+                        self.AC.update_target_critic(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
+                        self.AC.update_target_critic(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
+                        self.AC.update_target_actor(self.AC.target_actor.variables, self.AC.actor.variables)
                     self.AC.update_lr()
                     self.AC.update_var()
                 frame_num += 1
@@ -864,7 +926,7 @@ if __name__ == "__main__":
 
     runs = 2
 
-    for i in range(3,5):
+    for i in range(0,5):
         lqr = CaseOne(i)
 
      

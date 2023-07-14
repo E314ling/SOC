@@ -161,7 +161,6 @@ class prioritized_experience_memory():
             self.max_priority = max(self.max_priority, priority)
 
 
-
 class experience_memory():
 
     def __init__(self, buffer_capacity, batch_size, state_dim, action_dim):
@@ -207,8 +206,8 @@ class ActorCritic():
         self.action_dim = action_dim
 
         self.gamma = 1
-        self.tau = 0.005
-        self.tau_actor = 0.005
+        self.tau = 0.001
+        self.tau_actor = 0.001
         self.lower_action_bound = -5
         self.upper_action_bound = 5
         self.dt = 1/100
@@ -260,16 +259,25 @@ class ActorCritic():
                 self.critic_2 = self.get_critic_NN()
                 self.target_critic_2 = self.get_critic_NN()
                 self.target_critic_2.set_weights(self.critic_2.get_weights())
+                
+                self.critic_3 = self.get_critic_NN()
+                self.target_critic_3 = self.get_critic_NN()
+                self.target_critic_3_old = self.get_critic_NN()
+
+                self.target_critic_3.set_weights(self.critic_3.get_weights())
+                self.target_critic_3_old.set_weights(self.critic_3.get_weights())
+
 
                 self.actor = self.get_actor_NN()
                 self.target_actor = self.get_actor_NN()
                 self.target_actor.set_weights(self.actor.get_weights())
 
-
+        self.beta = 0.95
         self.critic_lr = 0.0001
         self.critic_optimizer_1 = tf.keras.optimizers.Adam(self.critic_lr)
         self.critic_optimizer_2 = tf.keras.optimizers.Adam(self.critic_lr)
-       
+        self.critic_optimizer_3 = tf.keras.optimizers.Adam(self.critic_lr)
+
         self.actor_lr = 0.0001
         self.actor_optimizer = tf.keras.optimizers.Adam(self.actor_lr)
       
@@ -277,7 +285,7 @@ class ActorCritic():
         self.var_decay = 0
         self.lr_decay = 1
         self.var_min = 0.1 #/ self.upper_action_bound
-        self.var_target = 0.2 #/ self.upper_action_bound
+        self.var_target = 0 #/ self.upper_action_bound
         self.update_frames = 2
 
        
@@ -307,10 +315,12 @@ class ActorCritic():
     def update_critic(self, state_batch, action_batch, reward_batch, next_state_batch, done_batch,terminal_condition_batch):
         target_actions = self.target_policy(next_state_batch) 
         
-        target_1, target_2 = self.target_critic_1([next_state_batch, target_actions]),self.target_critic_2([next_state_batch, target_actions])
-        
-        target_vals =  tf.minimum(target_1, target_2)
+        target_1, target_2, target_3 = self.target_critic_1([next_state_batch, target_actions]),self.target_critic_2([next_state_batch, target_actions]),self.target_critic_3([next_state_batch, target_actions])
+        target_3_old = self.target_critic_3_old([next_state_batch, target_actions])
+        target_3 = 0.5*(target_3 + target_3_old)
 
+        target_vals = self.beta * tf.minimum(target_1, target_2) + (1- self.beta) *target_3 #1/3*(target_1+ target_2+ target_3)
+        #target_vals = tf.minimum(tf.minimum(target_1, target_2),target_3)
         y = (1-done_batch)*tf.stop_gradient(reward_batch + self.gamma*target_vals) + done_batch*terminal_condition_batch
 
         with tf.GradientTape() as tape1:
@@ -327,14 +337,21 @@ class ActorCritic():
             
             critic_loss_2 = tf.reduce_mean((y-critic_value_2)**2)
 
+        with tf.GradientTape() as tape3:
+            tape3.watch(self.critic_3.trainable_variables)
+            
+            critic_value_3 = self.critic_3([state_batch, action_batch])
+            
+            critic_loss_3 = tf.reduce_mean((y-critic_value_3)**2)
         
         critic_grad_1 = tape1.gradient(critic_loss_1, self.critic_1.trainable_variables) 
         self.critic_optimizer_1.apply_gradients(zip(critic_grad_1, self.critic_1.trainable_variables))
      
-
         critic_grad_2 = tape2.gradient(critic_loss_2, self.critic_2.trainable_variables)
-      
         self.critic_optimizer_2.apply_gradients(zip(critic_grad_2, self.critic_2.trainable_variables))
+
+        critic_grad_3 = tape3.gradient(critic_loss_3, self.critic_3.trainable_variables)
+        self.critic_optimizer_3.apply_gradients(zip(critic_grad_3, self.critic_3.trainable_variables))
 
         return tf.maximum(tf.abs((y-critic_value_1)),tf.abs((y-critic_value_2)))
 
@@ -344,9 +361,10 @@ class ActorCritic():
         with tf.GradientTape() as tape:
             tape.watch(self.actor.trainable_variables)
             actions = self.actor(state_batch)
-            critic_value_1,critic_value_2 = self.critic_1([state_batch, actions]), self.critic_2([state_batch, actions])
+            critic_value_1,critic_value_2, critic_value_3 = self.critic_1([state_batch, actions]), self.critic_2([state_batch, actions]), self.critic_3([state_batch, actions])
             actor_loss = tf.math.reduce_mean(critic_value_1)
-            #actor_loss = tf.math.reduce_mean(0.5*(critic_value_1+critic_value_2))
+            #actor_loss = tf.math.reduce_mean(self.beta*tf.minimum(critic_value_1,critic_value_2) + (1-self.beta)*critic_value_3)
+            #actor_loss = tf.math.reduce_mean(1/3*(critic_value_1+critic_value_2+ critic_value_3))
         actor_grad = tape.gradient(actor_loss, self.actor.trainable_variables)
       
         self.actor_optimizer.apply_gradients(
@@ -354,7 +372,7 @@ class ActorCritic():
         )
 
    
-    def learn(self,frame_num):
+    def learn(self,frame_num, ep_counter):
         # get sample
 
         record_range = min(self.buffer.buffer_counter, self.buffer.buffer_capacity)
@@ -371,11 +389,13 @@ class ActorCritic():
         done_batch = tf.convert_to_tensor(self.buffer.done_buffer[batch_indices])
         terminal_condition_batch = tf.convert_to_tensor(self.buffer.terminal_condition_buffer[batch_indices])
         
-        prios = self.update_critic(state_batch, action_batch, reward_batch, next_state_batch, done_batch, terminal_condition_batch)
-        #self.buffer.update_priorities(batch_indices, prios)
-        if (frame_num % self.update_frames == 0 and frame_num != 0):
-            for _ in range(self.update_frames):
-                self.update_actor(state_batch, action_batch, reward_batch, next_state_batch, done_batch, terminal_condition_batch)
+        if ep_counter >= 50:
+            prios = self.update_critic(state_batch, action_batch, reward_batch, next_state_batch, done_batch, terminal_condition_batch)
+        else:
+            self.update_actor(state_batch, action_batch, reward_batch, next_state_batch, done_batch, terminal_condition_batch)
+        # if (frame_num % self.update_frames == 0 and frame_num != 0):
+        #     for _ in range(1):
+        #         self.update_actor(state_batch, action_batch, reward_batch, next_state_batch, done_batch, terminal_condition_batch)
 
     
     
@@ -615,6 +635,7 @@ class CaseOne():
         X[0] = self.start_state()
         frame_num = 0
         
+        ep_counter = 100
         for ep in range(self.num_episodes):
             
             n=0
@@ -666,23 +687,33 @@ class CaseOne():
 
                     self.AC.buffer.record((state.numpy()[0],action.numpy(),reward, new_state.numpy()[0], done_training, terminal_cond))
             
-                self.AC.learn(frame_num)
+                self.AC.learn(frame_num, ep_counter)
                 
                 if (frame_num % self.AC.update_frames == 0 and n != 0):
-                    for _ in range(self.AC.update_frames):
-                        self.AC.update_target_critic(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
-                        self.AC.update_target_critic(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
-                        self.AC.update_target_actor(self.AC.target_actor.variables, self.AC.actor.variables)
+                    #if (frame_num % self.AC.update_frames*20 == 0):
+                    self.AC.target_critic_3_old.set_weights(self.AC.target_critic_3.get_weights())
+                    for _ in range(1):
+                        if ep_counter >= 50:
+                            self.AC.update_target_critic(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
+                            self.AC.update_target_critic(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
+                            self.AC.update_target_critic(self.AC.target_critic_3.variables, self.AC.critic_3.variables)
+                        else:
+                            self.AC.update_target_actor(self.AC.target_actor.variables, self.AC.actor.variables)
+            
+                        
                     
                     self.AC.update_var()
                 frame_num += 1
-
+                
                 episodic_reward += reward
                 if(done):
                     break
                 else:
                     n += 1
+            ep_counter -= 1
 
+            if ep_counter == 0:
+                ep_counter = 100
             if (ep % self.dashboard_num == 0):
                 self.save_all(n_x,V_t,A_t,ep_reward_list,avg_reward_list,self.AC,base)
                 #self.dashboard(n_x,V_t,A_t,avg_reward_list,self.AC,base)
@@ -742,11 +773,11 @@ class CaseOne():
                         P_x[ix][iy] = AC.upper_action_bound* action[0][0]
                         P_y[ix][iy] = AC.upper_action_bound* action[0][1]
 
-                    v1,v2 = self.AC.critic_1([tf.expand_dims(tf.convert_to_tensor(state),0),action]),self.AC.critic_2([tf.expand_dims(tf.convert_to_tensor(state),0),action])
+                    v1,v2,v3 = self.AC.critic_1([tf.expand_dims(tf.convert_to_tensor(state),0),action]),self.AC.critic_2([tf.expand_dims(tf.convert_to_tensor(state),0),action]), self.AC.critic_3([tf.expand_dims(tf.convert_to_tensor(state),0),action])
                     
-                    V1[ix][iy] = v1
+                    V1[ix][iy] = v1 #1/3*(v1+v2+v3) #self.AC.beta*(tf.minimum(v1,v2)) + (1- self.AC.beta) *v3
                     
-                    V2[ix][iy] = v2
+                    V2[ix][iy] = v1 #1/3*(v1+v2+v3) #self.AC.beta*(tf.minimum(v1,v2)) + (1- self.AC.beta) *v3
                     True_P_x[ix][iy] = A_t[t0][ix][iy][0]
                     True_P_y[ix][iy] = A_t[t0][ix][iy][1]
             
@@ -771,9 +802,9 @@ if __name__ == "__main__":
 
    
     n_x = 40
-    runs = 5
+    runs = 1
 
-    for i in range(0,5):
+    for i in range(0,1):
         lqr = CaseOne(i)
         V_t,A_t,base = LQR.Solution_2_D(lqr).create_solution(n_x)
         #V_t, A_t, base = LQR.Solution(lqr).dynamic_programming(n_x)

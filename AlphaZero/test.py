@@ -4,10 +4,14 @@ from MCTS import MCTS
 game = 'FrozenLake-v1'
 env = gym.make(game)
 
+obs,_ = env.reset()
+print(env.action_space)
+
 
 root = env.reset()
 done = False
-mcts_tree = MCTS(state = root, game = game)
+mcts_tree = MCTS(root, game, 1)
+
 while not done:
 
     env.render()

@@ -114,7 +114,7 @@ class Solution_N_D():
             
             c = np.zeros(self.N)
             for n in range(self.N):
-                X[n] = np.clip(X[n], a_min= -4,a_max = 4)
+                X[n] = np.clip(X[n], a_min= -3,a_max = 3)
                 
 
                 
@@ -352,15 +352,15 @@ class Solution_2_D():
         # ax[1].plot_surface(X,Y,self.V[0])
         # plt.show()
 
-        cum_cost = np.zeros(500)
+        cum_cost = np.zeros(1000)
 
-        for i in range(500):
+        for i in range(1000):
             X = np.zeros((self.N, 2))
             X[0] = 6*np.random.rand(2) - 3
             
             c = np.zeros(self.N)
             for n in range(self.N):
-                X[n] = np.clip(X[n], a_min= -4,a_max = 4)
+                X[n] = np.clip(X[n], a_min= -3,a_max = 3)
                 
 
                 
