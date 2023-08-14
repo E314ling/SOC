@@ -691,14 +691,15 @@ class CaseOne():
                 
                 if (frame_num % self.AC.update_frames == 0 and n != 0):
                     #if (frame_num % self.AC.update_frames*20 == 0):
-                    self.AC.target_critic_3_old.set_weights(self.AC.target_critic_3.get_weights())
+                    
                     for _ in range(1):
                         if ep_counter >= 50:
+                            self.AC.target_critic_3_old.set_weights(self.AC.target_critic_3.get_weights())
                             self.AC.update_target_critic(self.AC.target_critic_1.variables, self.AC.critic_1.variables)
                             self.AC.update_target_critic(self.AC.target_critic_2.variables, self.AC.critic_2.variables)
                             self.AC.update_target_critic(self.AC.target_critic_3.variables, self.AC.critic_3.variables)
-                        else:
-                            self.AC.update_target_actor(self.AC.target_actor.variables, self.AC.actor.variables)
+                        
+                        self.AC.update_target_actor(self.AC.target_actor.variables, self.AC.actor.variables)
             
                         
                     

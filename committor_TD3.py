@@ -735,11 +735,6 @@ class CaseOne():
         np.save('./Saved_Runs/committor/free_energy_approx_2_{}_run_{}'.format(steps, self.run), free_energy_approx_2)
         np.save('./Saved_Runs/committor/true_free_energy', free_energy)
 
-
-
-
-        
-            
     def dashboard(self,n_x,avg_reward_list, avg_stopping_list,AC: ActorCritic,base, base_st):
         if (len(self.change_V1) == 0):
             self.old_V1 = np.zeros((n_x,n_x))
