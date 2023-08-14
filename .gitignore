@@ -8,5 +8,10 @@
 /__pycache__
 /Models
 /OpenAI.ipynb
-/Saved_Runs
+
+/Saved_Runs/committor
+/Saved_Runs/LQR
+/Saved_Runs/OUP
+/Saved_Runs/pendulum
+
 /test.py
